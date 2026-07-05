@@ -1,0 +1,84 @@
+# USB 傳輸與 Lightbox 遷移計畫
+
+日期:2026-07-05
+對象板子:Waveshare ESP32-S3-Touch-AMOLED-2.16(USB 供電、無電池)
+決策記錄:BLE 整個拆除;鍵盤功能改走 USB HID;梗圖來源用 TF 卡。
+
+## 背景與動機
+
+目前資料通道走 BLE GATT(daemon 透過藍牙把用量 JSON 寫進裝置),側鍵透過 BLE HID 送快捷鍵。BLE 帶來大量維運複雜度:macOS bonding 自我修復、owner-lock 機制、藍牙權限 priming、配對手勢。本裝置無電池、常駐 USB 供電,改走 USB 有線傳輸可移除整類問題。
+
+使用者需求:
+1. 改用 USB 連線,消除藍牙配對問題
+2. 側鍵重新配置(語音模式左鍵不使用、中鍵長按三秒配對手勢移除)
+3. 新增 lightbox 畫面:顯示 TF 卡上的梗圖(PNG/GIF)
+
+## 已查證的技術前提
+
+- Type-C 是 ESP32-S3 原生 USB(非 UART bridge),repo 已設 `ARDUINO_USB_CDC_ON_BOOT=1`
+- 目前 S3 env 未設 `ARDUINO_USB_MODE`,預設 HW CDC/JTAG 模式,該模式無法做 USB HID;必須改 `ARDUINO_USB_MODE=0`(TinyUSB OTG)才能 CDC+HID composite。切換後燒錄時序列埠會短暫重新列舉,需實測
+- LVGL 9 內建 lodepng(PNG)與 gifdec(GIF)解碼器,開 `LV_USE_LODEPNG=1`、`LV_USE_GIF=1` build flag 即可,無需第三方庫
+- **待查:2.16 板的 TF 卡腳位**。2.06 板的腳位表(CS=17/MOSI=1/MISO=3/SCK=2)不可沿用。從 board.h 看 GPIO 1、2、3、13、16、17、21、39-41、47、48 未被佔用,但必須以 2.16 的 wiki 腳位表或 schematic 確認後才能動工 Phase 4
+
+## Phase 1 — USB 序列資料通道(先加後減,BLE 暫時保留)
+
+韌體:
+- `firmware/src/main.cpp` 的 `check_serial_cmd()`(約 170 行處)目前只認 `screenshot`/`buzz`。擴充:收到以 `{` 開頭的行,餵給既有 `parse_json()`(該函式只吃字串,不需修改),成功後以 `Serial.println` 回一行 ack JSON
+- 資料處理路徑與 `ble_has_data()` 並存,兩通道同時有效
+
+Daemon:
+- 新增 `daemon/claude_usage_daemon_usb.py`:token 讀取(Keychain/credentials.json)、`poll_api()`、`PlanSelector` 原樣沿用;BLE 連線邏輯(discover/reconnect/unpair/backoff,約 300 行)換成 pyserial:用 `serial.tools.list_ports` 以 Espressif VID `0x303A` 自動找埠 → 開埠 → 每 60 秒寫一行 JSON;埠消失則等待重連
+- `install-mac.sh`:pip 依賴 bleak 換 pyserial;blueutil 安裝與藍牙權限 priming 區塊(約 159-250 行)整段移除;LaunchAgent 指向新 daemon
+
+驗收:關閉 Mac 藍牙,螢幕用量數字仍每 60 秒更新。
+
+## Phase 2 — 拆 BLE、鍵盤改 USB HID
+
+- `firmware/platformio.ini` S3 env:加 `-DARDUINO_USB_MODE=0`;移除 NimBLE lib_deps 與五個 `CONFIG_BT_NIMBLE_*` flag
+- 新增 `firmware/src/usb_hid.{h,cpp}`:以 arduino-esp32 內建 `USBHIDKeyboard` 實作 press(Space)/press(Shift+Tab)/releaseAll
+- 刪除 `firmware/src/ble.{h,cpp}` 全部(owner-lock、GATT service、HID report map、advertising 的存在理由隨 BLE 消失)
+- `main.cpp`:刪 `pair_tick()` 狀態機(約 242-286 行)、`ble_init`/`ble_tick` 呼叫、BLE 狀態 UI 更新
+- `ui.cpp`:藍牙狀態畫面/圖示改為 USB 連線狀態(以 TinyUSB CDC 的 DTR 判斷 host 是否開埠)
+- `flash-mac.sh`:燒錄前自動 `launchctl unload` daemon、燒錄後 load 回來(序列埠獨占,daemon 與 esptool/screenshot.sh 會互搶)
+
+驗收:系統藍牙移除 Clawdmeter 後,數字照常更新;右鍵按下,Claude Code 模式照常切換。
+
+## Phase 3 — 按鍵重新配置(可與 Phase 2 合併實作)
+
+| 按鍵 | 新行為 |
+|---|---|
+| 左鍵(GPIO 0) | 循環切畫面:splash → usage → lightbox → splash |
+| 中鍵短按 | splash:切動畫/usage:切亮度/lightbox:下一張圖 |
+| 中鍵長按 3 秒 | 移除(原配對手勢) |
+| 中鍵按住 8 秒 | 硬體關機(AXP2101 晶片行為,保留) |
+| 右鍵(GPIO 18) | Shift+Tab,走 USB HID |
+
+- 改動集中在 `main.cpp` 約 302-352 行的按鍵區塊
+- 「睡眠中第一擊只喚醒不觸發」的既有邏輯(idle_consume_wake_press)保留
+
+## Phase 4 — Lightbox(TF 卡梗圖)
+
+前置:確認 2.16 的 TF 腳位(wiki 或 schematic),決定 SPI 或 SDMMC。
+
+- 新增 `firmware/src/sdcard.{h,cpp}`:掛載 TF 卡(FAT32),掃描 `/memes/` 下 `.png`/`.gif` 檔名排序
+- 註冊 LVGL `lv_fs` driver 對接 Arduino SD API;開 `LV_USE_LODEPNG=1`、`LV_USE_GIF=1`
+- `ui.cpp` 新增 `SCREEN_LIGHTBOX`:全螢幕 `lv_image`(PNG)/`lv_gif`(GIF),中鍵短按換下一張;進入畫面時重新掃描目錄(換圖 = 拔卡改檔再插回,不碰電腦)
+- 記憶體:480×480 PNG 解碼後約 900KB,8MB PSRAM 足夠,但需確認 LVGL 影像快取配置走 PSRAM(現有 draw buffer 已有前例)
+
+已知限制:GIF 為 CPU 逐幀解碼,480×480 大 GIF 會掉幀;梗圖建議預先縮至 ≤480px、幀數精簡。
+
+## 執行順序
+
+```
+Phase 1(USB 資料通道)→ 驗收 → Phase 2+3(拆 BLE、HID、按鍵)→ 驗收
+                                        ↓
+                          Phase 4(lightbox)← 先查 TF 腳位
+```
+
+Phase 1 是加法,失敗可退回。Phase 2 起為不可逆分岔點:`ble.cpp`、`daemon/`、`install-mac.sh` 從此與 upstream 分道,後續 upstream 更新以 cherry-pick 揀選(避開改動這三處的 commit)。
+
+## 驗證原則
+
+- 每個 phase 完成後所有受影響的 PlatformIO env 必須編譯通過(`pio run -d firmware -e waveshare_amoled_216`;其他板子 env 不得被破壞)
+- daemon 既有 pytest 測試(conftest.py、daemon/tests/)必須維持通過
+- 實機驗證(燒錄、按鍵、TF 卡)由使用者執行,agent 不得宣稱已做實機驗證
