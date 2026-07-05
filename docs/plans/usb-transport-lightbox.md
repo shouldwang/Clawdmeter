@@ -18,7 +18,8 @@
 - Type-C 是 ESP32-S3 原生 USB(非 UART bridge),repo 已設 `ARDUINO_USB_CDC_ON_BOOT=1`
 - 目前 S3 env 未設 `ARDUINO_USB_MODE`,預設 HW CDC/JTAG 模式,該模式無法做 USB HID;必須改 `ARDUINO_USB_MODE=0`(TinyUSB OTG)才能 CDC+HID composite。切換後燒錄時序列埠會短暫重新列舉,需實測
 - LVGL 9 內建 lodepng(PNG)與 gifdec(GIF)解碼器,開 `LV_USE_LODEPNG=1`、`LV_USE_GIF=1` build flag 即可,無需第三方庫
-- **待查:2.16 板的 TF 卡腳位**。2.06 板的腳位表(CS=17/MOSI=1/MISO=3/SCK=2)不可沿用。從 board.h 看 GPIO 1、2、3、13、16、17、21、39-41、47、48 未被佔用,但必須以 2.16 的 wiki 腳位表或 schematic 確認後才能動工 Phase 4
+- **已查證:2.16 板的 TF 卡腳位(2026-07-05,官方 schematic + docs.waveshare.com wiki 雙來源一致)**:走 **SPI**——MOSI=GPIO1、SCK=GPIO2、MISO=GPIO3、CS=GPIO41。卡座 D1/D2 未接線,硬體上無法 4-bit SDMMC。來源:`files.waveshare.com/wiki/ESP32-S3-Touch-AMOLED-2.16/ESP32-S3-Touch-AMOLED-2.16-Schematic.pdf`(SD-CARD 區塊 netlist)與 wiki 的 GPIO pin assignments 表
+- **風險:GPIO2 與 board.h 的 reset 定義衝突**。repo 的 `boards/waveshare_amoled_216/board.h` 寫 `LCD_RESET 2`、`TP_RST 2`,但 schematic netlist 顯示 LCD_RESET 實接 **GPIO39**、TP_RESET 實接 **GPIO40**;`2` 疑似沿用 Waveshare 範例的佔位值。SD 卡 SCK 就是 GPIO2,若韌體同時把 GPIO2 當 reset 拉,SD 時脈會被干擾。**Phase 4 前置**:先把 reset 定義改為 39/40,燒錄實測顯示與觸控正常,才能把 GPIO2 交給 SD(此為 schematic 反推,必須實機驗證)
 
 ## Phase 1 — USB 序列資料通道(先加後減,BLE 暫時保留)
 
@@ -58,7 +59,7 @@ Daemon:
 
 ## Phase 4 — Lightbox(TF 卡梗圖)
 
-前置:確認 2.16 的 TF 腳位(wiki 或 schematic),決定 SPI 或 SDMMC。
+前置(腳位已查證,見「已查證的技術前提」):走 SPI,MOSI=1/SCK=2/MISO=3/CS=41。動工前必須先解 GPIO2 reset 衝突——`board.h` 的 `LCD_RESET`/`TP_RST` 改為 39/40 並實機驗證顯示與觸控正常。
 
 - 新增 `firmware/src/sdcard.{h,cpp}`:掛載 TF 卡(FAT32),掃描 `/memes/` 下 `.png`/`.gif` 檔名排序
 - 註冊 LVGL `lv_fs` driver 對接 Arduino SD API;開 `LV_USE_LODEPNG=1`、`LV_USE_GIF=1`
