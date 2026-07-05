@@ -1,0 +1,26 @@
+[project]
+type = "git-dev"
+dotfiles_dir = "/Users/shouldwang/Documents/GitHub/dotfiles"
+phase = "dev"  # spec | design | dev | qa | deploy | iteration
+
+[commands]
+dev = ""
+format = ""
+lint = ""
+typecheck = ""
+test = ""
+test_changed = ""
+deploy = ""
+
+[paths]
+key_dirs = ["src", "tests"]
+high_risk = ["db/migrations", ".github/workflows"]
+dependency_files = ["package.json"]
+lockfiles = ["package-lock.json"]
+spec_dirs = ["docs/spec", "docs/design", ".agent/specs"]
+
+[features]
+memory_capture = true
+rpi_enforced = "complex-only"  # always | complex-only | inform-only (overridden per phase)
+max_episodic_entries = 50
+branch_required = true  # false 代表允許直接在 main 作業（dotfiles/obsidian 等例外 repo 使用）

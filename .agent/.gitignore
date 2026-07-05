@@ -1,0 +1,6 @@
+memory/episodic/
+memory/working/
+state/
+logs/
+cache/
+tmp/
