@@ -102,6 +102,18 @@ def _read_token_keychain() -> str | None:
     return _extract_access_token(out.stdout)
 
 
+# ---------------------------------------------------------------------------
+# read_config_dirs / read_token_for / poll_active_payload below are a
+# DELIBERATE sync'd duplicate of the same-named functions in
+# claude_usage_daemon.py (the BLE daemon). That module keeps its own copies
+# — instead of importing these — because its test suite
+# (daemon/tests/test_macos_multidir.py) monkeypatches attributes directly on
+# that module, and a function imported by reference still resolves globals
+# in the module it was *defined* in, not the importer's module. See the
+# matching comment in claude_usage_daemon.py for the full explanation. If you
+# change the logic here, make the same change there, and vice versa.
+# ---------------------------------------------------------------------------
+
 def read_config_dirs() -> list[Path]:
     """Claude config dirs to poll, from the `config_dirs` option (comma list).
 

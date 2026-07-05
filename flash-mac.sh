@@ -38,8 +38,24 @@ echo "Board: $BOARD"
 echo "Port:  $PORT"
 echo ""
 
+# The USB daemon holds the same serial port open; stop it before flashing so
+# esptool doesn't fight it for the port, then restart it unconditionally
+# (including on a failed flash) so the user isn't left without the daemon.
+LAUNCH_AGENT="$HOME/Library/LaunchAgents/com.user.claude-usage-daemon.plist"
+launchctl unload "$LAUNCH_AGENT" 2>/dev/null || true
+
 cd "$SCRIPT_DIR/firmware"
-pio run -e "$BOARD" -t upload --upload-port "$PORT"
+if pio run -e "$BOARD" -t upload --upload-port "$PORT"; then
+    FLASH_STATUS=0
+else
+    FLASH_STATUS=$?
+fi
+
+launchctl load -w "$LAUNCH_AGENT" 2>/dev/null || true
+
+if [ "$FLASH_STATUS" -ne 0 ]; then
+    exit "$FLASH_STATUS"
+fi
 
 echo ""
 echo "=== Done ==="

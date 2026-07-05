@@ -59,6 +59,12 @@ SAVED_ADDR_FILE = Path.home() / ".config" / "claude-usage-monitor" / "ble-addres
 # wrappers exist so the existing tests' monkeypatching keeps working; the
 # leaf helpers they call (log, poll_api, _read_token_keychain, etc.) are
 # genuinely shared with usage_core.
+#
+# usage_core.py carries its own copy of these same three functions (used by
+# claude_usage_daemon_usb.py) for the identical reason. The two copies are a
+# DELIBERATE sync'd duplication, not drift — if you change the logic here,
+# make the same change in usage_core.py's read_config_dirs / read_token_for /
+# poll_active_payload, and vice versa.
 # ---------------------------------------------------------------------------
 
 def read_config_dirs() -> list[Path]:

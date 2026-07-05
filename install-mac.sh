@@ -1,5 +1,5 @@
 #!/bin/bash
-# macOS installer for Clawdmeter daemon (Python + bleak + launchd).
+# macOS installer for Clawdmeter daemon (Python + pyserial + launchd).
 # Mirrors install.sh but uses LaunchAgents instead of systemd user units.
 set -e
 
@@ -175,9 +175,7 @@ if [ ! -d "$VENV_DIR" ]; then
     "$PYTHON3" -m venv "$VENV_DIR"
 fi
 "$VENV_DIR/bin/pip" install --quiet --upgrade pip
-# bleak is kept installed (not yet removed — Phase 2 drops it once BLE is torn
-# out); pyserial is the new USB transport's dependency.
-"$VENV_DIR/bin/pip" install --quiet "bleak>=0.22" "httpx>=0.27" "pyserial>=3.5"
+"$VENV_DIR/bin/pip" install --quiet "httpx>=0.27" "pyserial>=3.5"
 PYTHON_BIN="$VENV_DIR/bin/python"
 echo "  OK ($PYTHON_BIN)"
 echo ""
