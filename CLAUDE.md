@@ -69,7 +69,7 @@ firmware/src/
   main.cpp                  — setup() + loop(): HAL calls only, zero #ifdef BOARD_*
   ui.{h,cpp}                — 3-screen UI (splash, usage, bluetooth). compute_layout() picks fonts/positions from board_caps() (responsive — current breakpoint: H >= 460 → large, else compact)
   splash.{h,cpp}            — 20×20 pixel-art engine. CELL = min(W,H)/20, centered.
-  ble.{h,cpp}               — NimBLE peripheral: custom data service + HID keyboard
+  usb_hid.{h,cpp}           — USB HID keyboard (TinyUSB, S3 only); C6 boards get a no-op stub
   data.h                    — UsageData struct
   icons.h                   — icon arrays. Battery (5×) are RGB565A8 with alpha; rest are raw RGB565.
   logo.h                    — 80×80 RGB565 logo
@@ -152,6 +152,8 @@ See `~/.claude/projects/.../memory/` files for persistent context (user is an em
 - Battery icons converted to RGB565A8 alpha so they blend cleanly over the splash animations.
 
 ## Daemon / host side
+
+**macOS now runs over USB serial**, not BLE: `daemon/claude_usage_daemon_usb.py` auto-detects the device by Espressif VID (`0x303A`) and writes the usage JSON over the serial port every 60s (see `install-mac.sh`). The BLE description below still applies to Linux (`daemon/claude-usage-daemon.sh`, systemd) and to the still-present macOS BLE daemon (`daemon/claude_usage_daemon.py`), neither of which this repo has removed.
 
 Bash daemon (`daemon/claude-usage-daemon.sh`) reads OAuth token, polls Anthropic API, sends JSON over BLE GATT. Run with `systemctl --user start claude-usage-daemon`. The unit file's `ExecStart` is the absolute path to the script — repoint it when switching between the worktree and the main checkout.
 

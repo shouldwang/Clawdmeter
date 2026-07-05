@@ -70,3 +70,4 @@
 #define BOARD_HAS_BATTERY          1
 #define BOARD_HAS_IO_EXPANDER      1
 #define BOARD_HAS_SOUND            1
+#define BOARD_HAS_USB_HID          1   // S3 has native USB-OTG (TinyUSB); see ARDUINO_USB_MODE=0

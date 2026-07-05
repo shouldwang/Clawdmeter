@@ -9,6 +9,7 @@ static const BoardCaps caps = {
     .has_rotation = false,
     .has_battery = true,
     .has_imu = true,
+    .has_usb_hid = (bool)BOARD_HAS_USB_HID,
 };
 
 const BoardCaps& board_caps(void) { return caps; }

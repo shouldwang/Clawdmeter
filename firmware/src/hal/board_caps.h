@@ -18,6 +18,7 @@ struct BoardCaps {
     bool    has_rotation;    // IMU-driven CPU rotation in the flush callback
     bool    has_battery;     // AXP2101 battery measurement is meaningful
     bool    has_imu;         // QMI8658 (or compatible) is populated
+    bool    has_usb_hid;     // native USB-OTG present (TinyUSB HID keyboard); see BOARD_HAS_USB_HID
 };
 
 const BoardCaps& board_caps(void);

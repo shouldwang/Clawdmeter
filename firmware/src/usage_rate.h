@@ -4,7 +4,7 @@
 // to *how heavily* Claude is being used right now, not just the current bucket
 // level. Returns one of 4 group indices for the splash to pick animations from.
 
-// Feed in the latest session percentage every time fresh BLE data arrives.
+// Feed in the latest session percentage every time fresh USB serial data arrives.
 // Returns true when this sample is a session reset (pct dropped substantially
 // vs the previous sample) — the caller uses this to chime the buzzer. Never
 // true on the first sample after boot (no prior sample to compare against).

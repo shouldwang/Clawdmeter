@@ -63,3 +63,4 @@
 #define BOARD_HAS_IMU              1    // present + initialized for I2C bus health
 #define BOARD_HAS_BATTERY          1
 #define BOARD_HAS_IO_EXPANDER      1
+#define BOARD_HAS_USB_HID          0   // C6 has only USB-Serial-JTAG, no USB-OTG — can't do TinyUSB HID

@@ -135,7 +135,7 @@ static lv_image_dsc_t battery_dscs[5];  // empty, low, medium, full, charging
 // ---- Live-data freshness → which usage sub-view to show ----
 // usage panels when data is flowing, an idle "Zzz" screen when the host is
 // connected but no usage update landed within DATA_FRESH_MS, the pairing hint
-// when BLE is down. Re-evaluated every loop in ui_tick_anim().
+// when the USB host is down. Re-evaluated every loop in ui_tick_anim().
 static lv_obj_t* idle_group;            // the "Zzz" idle screen
 static uint32_t  last_data_ms = 0;      // lv_tick when the last valid usage update landed
 static bool      data_received = false; // any valid update since boot
@@ -145,7 +145,7 @@ static const uint32_t DATA_FRESH_MS = 90000;  // usage counts as "live" within t
 // ---- Shared ----
 static lv_image_dsc_t logo_dsc;
 static screen_t current_screen = SCREEN_USAGE;
-static bool     s_ble_connected = false;   // cached BLE connection state
+static bool     s_usb_connected = false;   // cached USB host-connection state
 static uint32_t connected_at_ms = 0;       // when we last entered CONNECTED ("Connected" dwell)
 
 // Animation state
@@ -314,8 +314,8 @@ static lv_obj_t* make_usage_panel(lv_obj_t* parent, int y, const char* pill_text
     return panel;
 }
 
-// Pairing hint — shown when disconnected so the screen isn't empty and the
-// user knows how to (re)pair. Wording matches the 3-second release gesture.
+// USB-disconnected hint — shown when the host hasn't opened the serial port
+// yet, so the screen isn't empty while waiting to be plugged in.
 static void build_pair_group(lv_obj_t* parent) {
     pair_group = lv_obj_create(parent);
     lv_obj_set_size(pair_group, L.scr_w, L.scr_h - L.content_y);
@@ -327,24 +327,24 @@ static void build_pair_group(lv_obj_t* parent) {
     lv_obj_add_flag(pair_group, LV_OBJ_FLAG_EVENT_BUBBLE);
 
     lv_obj_t* l1 = lv_label_create(pair_group);
-    lv_label_set_text(l1, "To pair");
+    lv_label_set_text(l1, "USB not connected");
     lv_obj_set_style_text_font(l1, L.bt_status_font, 0);
     lv_obj_set_style_text_color(l1, COL_TEXT, 0);
     lv_obj_align(l1, LV_ALIGN_TOP_MID, 0, 40);
 
     lv_obj_t* l2 = lv_label_create(pair_group);
-    lv_label_set_text(l2, "hold the power button");
+    lv_label_set_text(l2, "plug in the USB-C cable");
     lv_obj_set_style_text_font(l2, L.bt_device_font, 0);
     lv_obj_set_style_text_color(l2, COL_DIM, 0);
     lv_obj_align(l2, LV_ALIGN_TOP_MID, 0, 120);
 
     lv_obj_t* l3 = lv_label_create(pair_group);
-    lv_label_set_text(l3, "for 3 seconds, then release");
+    lv_label_set_text(l3, "and start the daemon on your Mac");
     lv_obj_set_style_text_font(l3, L.bt_device_font, 0);
     lv_obj_set_style_text_color(l3, COL_DIM, 0);
     lv_obj_align(l3, LV_ALIGN_TOP_MID, 0, 160);
 
-    lv_obj_add_flag(pair_group, LV_OBJ_FLAG_HIDDEN);  // ui_update_ble_status decides
+    lv_obj_add_flag(pair_group, LV_OBJ_FLAG_HIDDEN);  // ui_update_usb_status decides
 }
 
 // Idle "Zzz" screen — shown when the host is connected but no usage update has
@@ -550,15 +550,15 @@ void ui_update(const UsageData* data) {
     }
 }
 
-// Pick the usage-view sub-screen: pairing hint (BLE down), the idle "Zzz" screen
+// Pick the usage-view sub-screen: USB-disconnected hint, the idle "Zzz" screen
 // (connected but data has gone stale), or the live usage panels. Only re-lays-out
 // on an actual change. The animated status line stays visible everywhere — it
 // reads "Listening…" on the idle screen, keeping it alive rather than frozen.
 static void update_view_state(void) {
     if (!usage_group || !pair_group || !idle_group) return;
     int v;
-    if (!s_ble_connected) {
-        v = 0;  // pairing hint
+    if (!s_usb_connected) {
+        v = 0;  // USB-disconnected hint
     } else if (data_received && (lv_tick_get() - last_data_ms) < DATA_FRESH_MS) {
         v = 2;  // live usage
     } else {
@@ -614,8 +614,8 @@ void ui_tick_anim(void) {
 
     // Status text by priority. Whimsical messages only when connected & settled.
     const char* text;
-    if (!s_ble_connected) {
-        text = "Waiting";              // advertising / waiting for a host connection
+    if (!s_usb_connected) {
+        text = "Waiting";              // waiting for the USB host to connect
     } else if (view_state == 1) {      // idle — alternate so it reads as alive AND data-less
         text = (anim_msg_idx & 1) ? "No data" : "Listening";
     } else if (now - connected_at_ms < 5000) {
@@ -669,16 +669,23 @@ void ui_toggle_splash(void) {
     else                                  ui_show_screen(SCREEN_SPLASH);
 }
 
+// Only two screens exist today (splash, usage), so cycling is a toggle —
+// same as ui_toggle_splash. Phase 4 adds lightbox into the rotation, at
+// which point this stops being a plain toggle.
+void ui_cycle_screen(void) {
+    if (current_screen == SCREEN_SPLASH) ui_show_screen(prev_non_splash_screen);
+    else                                  ui_show_screen(SCREEN_SPLASH);
+}
+
 screen_t ui_get_current_screen(void) {
     return current_screen;
 }
 
-void ui_update_ble_status(ble_state_t state, const char* name, const char* mac) {
-    (void)name; (void)mac;
-    bool was_connected = s_ble_connected;
-    s_ble_connected = (state == BLE_STATE_CONNECTED);
+void ui_update_usb_status(bool connected) {
+    bool was_connected = s_usb_connected;
+    s_usb_connected = connected;
 
-    if (s_ble_connected && !was_connected) connected_at_ms = lv_tick_get();
+    if (s_usb_connected && !was_connected) connected_at_ms = lv_tick_get();
     // pair / idle / usage — picked from connection + data freshness.
     update_view_state();
 }
