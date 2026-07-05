@@ -8,7 +8,7 @@ SERVICE_LABEL="com.user.claude-usage-daemon"
 PLIST_SRC="$SCRIPT_DIR/daemon/$SERVICE_LABEL.plist"
 PLIST_DST="$HOME/Library/LaunchAgents/$SERVICE_LABEL.plist"
 VENV_DIR="$SCRIPT_DIR/daemon/.venv"
-DAEMON_PY="$SCRIPT_DIR/daemon/claude_usage_daemon.py"
+DAEMON_PY="$SCRIPT_DIR/daemon/claude_usage_daemon_usb.py"
 LOG_DIR="$HOME/Library/Logs"
 LOG_OUT="$LOG_DIR/claude-usage-daemon.out.log"
 LOG_ERR="$LOG_DIR/claude-usage-daemon.err.log"
@@ -156,20 +156,6 @@ if [ -z "$PYTHON3" ]; then
     exit 1
 fi
 echo "  Using $($PYTHON3 --version) at $PYTHON3"
-# blueutil lets the daemon auto-recover from a stale BLE bond (CoreBluetooth
-# Code=15 "failed to encrypt") after a firmware reflash, without you having to
-# manually "Forget This Device". Best-effort: install via Homebrew if present,
-# otherwise warn — the daemon degrades gracefully (logs a manual-fix hint).
-if ! command -v blueutil >/dev/null 2>&1; then
-    if command -v brew >/dev/null 2>&1; then
-        echo "  Installing blueutil (for BLE bond auto-recovery)..."
-        brew install blueutil >/dev/null 2>&1 || echo "  Warning: 'brew install blueutil' failed; auto-recovery disabled."
-    else
-        echo "  Note: blueutil not found and Homebrew is absent. Install blueutil"
-        echo "        ('brew install blueutil') to enable automatic recovery from"
-        echo "        stale BLE bonds; otherwise you'll forget the device manually."
-    fi
-fi
 if ! security find-generic-password -s "Claude Code-credentials" -a "$USER" -w >/dev/null 2>&1; then
     echo "Warning: Claude Code OAuth token not found in Keychain (service 'Claude Code-credentials')."
     echo "  Sign in via Claude Code first, then re-run this installer."
@@ -189,7 +175,9 @@ if [ ! -d "$VENV_DIR" ]; then
     "$PYTHON3" -m venv "$VENV_DIR"
 fi
 "$VENV_DIR/bin/pip" install --quiet --upgrade pip
-"$VENV_DIR/bin/pip" install --quiet "bleak>=0.22" "httpx>=0.27"
+# bleak is kept installed (not yet removed — Phase 2 drops it once BLE is torn
+# out); pyserial is the new USB transport's dependency.
+"$VENV_DIR/bin/pip" install --quiet "bleak>=0.22" "httpx>=0.27" "pyserial>=3.5"
 PYTHON_BIN="$VENV_DIR/bin/python"
 echo "  OK ($PYTHON_BIN)"
 echo ""
@@ -215,39 +203,10 @@ configure_clock
 configure_chime
 echo ""
 
-echo "[5/6] Bluetooth permission check..."
-echo "  On first run the daemon will trigger a Bluetooth permission prompt."
-echo "  macOS only prompts for foreground processes — so we'll run it"
-echo "  interactively once below. Press Ctrl+C after you see 'Scanning...'"
-echo "  and grant permission when prompted. Then re-run this installer"
-echo "  (or just continue) to enable launchd autostart."
-echo ""
-read -r -p "Run a permission-priming scan now? [Y/n] " ans
-if [[ ! "$ans" =~ ^[Nn]$ ]]; then
-    "$PYTHON_BIN" "$DAEMON_PY" || true
-fi
-echo ""
-
-# blueutil needs its OWN Bluetooth permission (separate identity from the
-# Python daemon) to auto-recover from a stale bond. It BLOCKS instead of
-# erroring when unauthorized, so prime it now behind a bounded wait: this
-# returns instantly if already authorized, or triggers the one-time Bluetooth
-# permission prompt (the grant sticks even if we time out before you click).
-if command -v blueutil >/dev/null 2>&1; then
-    echo "  Priming blueutil's Bluetooth permission (grant if prompted)..."
-    blueutil --paired >/dev/null 2>&1 &
-    bu_pid=$!
-    ( sleep 20; kill "$bu_pid" 2>/dev/null ) >/dev/null 2>&1 &
-    bu_killer=$!
-    if wait "$bu_pid" 2>/dev/null; then
-        echo "  blueutil authorized — stale-bond auto-recovery enabled."
-    else
-        echo "  blueutil could not access Bluetooth yet. If auto-recovery"
-        echo "  fails later, grant it under System Settings > Privacy &"
-        echo "  Security > Bluetooth, then re-run: blueutil --paired"
-    fi
-    kill "$bu_killer" 2>/dev/null || true
-fi
+echo "[5/6] USB connection..."
+echo "  The device connects over USB — no pairing or permission prompts"
+echo "  needed. Plug it in via USB-C; the daemon auto-detects it by its"
+echo "  Espressif vendor ID and starts polling within a few seconds."
 echo ""
 
 echo "[6/6] Loading launchd service..."
@@ -258,11 +217,9 @@ echo ""
 
 echo "=== Done ==="
 echo ""
-echo "First-time Bluetooth pairing (after firmware is flashed):"
-echo "  1. Power on the device."
-echo "  2. Open System Settings → Bluetooth."
-echo "  3. Click 'Connect' next to 'Clawdmeter'."
-echo "  4. The daemon will discover it within ~30 s and start polling."
+echo "First-time USB connection (after firmware is flashed):"
+echo "  1. Plug the device into this Mac via USB-C."
+echo "  2. The daemon will discover it within ~5 s and start polling."
 echo ""
 echo "Useful commands:"
 echo "  launchctl list | grep claude-usage     # check it's running"
