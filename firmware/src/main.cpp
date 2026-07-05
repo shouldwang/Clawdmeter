@@ -161,8 +161,14 @@ static void send_screenshot() {
     Serial.printf("SCREENSHOT_START %lu %lu %lu\n",
         (unsigned long)w, (unsigned long)h, (unsigned long)buf_size);
     Serial.flush();
-    Serial.write(sbuf, buf_size);
-    Serial.flush();
+    // TinyUSB CDC's TX buffer cannot reliably absorb a full 350-460 KB snapshot
+    // in one write. Send bounded chunks and drain each before queuing the next.
+    static const size_t SCREENSHOT_CHUNK_SIZE = 4096;
+    for (size_t offset = 0; offset < buf_size; offset += SCREENSHOT_CHUNK_SIZE) {
+        size_t chunk_size = min((size_t)SCREENSHOT_CHUNK_SIZE, (size_t)buf_size - offset);
+        Serial.write(sbuf + offset, chunk_size);
+        Serial.flush();
+    }
     Serial.println();
     Serial.println("SCREENSHOT_END");
     heap_caps_free(sbuf);

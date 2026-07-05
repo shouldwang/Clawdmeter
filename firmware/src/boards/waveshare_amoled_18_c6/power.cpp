@@ -21,8 +21,6 @@ static int      cached_pct        = -1;
 static bool     cached_charging   = false;
 static bool     cached_vbus       = false;
 static bool     pwr_pressed_flag  = false;
-static bool     pwr_long_flag     = false;
-static bool     pwr_released_flag = false;
 static uint32_t last_battery_ms   = 0;
 static uint32_t last_charging_ms  = 0;
 static uint32_t last_pwr_ms       = 0;
@@ -39,12 +37,9 @@ void power_hal_init(void) {
 
     pmu.disableIRQ(XPOWERS_AXP2101_ALL_IRQ);
     pmu.clearIrqStatus();
-    pmu.enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ
-                | XPOWERS_AXP2101_PKEY_LONG_IRQ
-                | XPOWERS_AXP2101_PKEY_POSITIVE_IRQ);
+    pmu.enableIRQ(XPOWERS_AXP2101_PKEY_SHORT_IRQ);
 
-    // Bump press-off to 8s so a slightly-too-long hold doesn't shut the
-    // device down mid hold-to-pair gesture.
+    // Keep the verified 8s hardware force-shutdown behavior.
     pmu.setPowerKeyPressOffTime(XPOWERS_POWEROFF_8S);
 
     cached_charging = pmu.isCharging();
@@ -68,8 +63,6 @@ void power_hal_tick(void) {
         last_pwr_ms = now;
         pmu.getIrqStatus();
         if (pmu.isPekeyShortPressIrq())    pwr_pressed_flag  = true;
-        if (pmu.isPekeyLongPressIrq())     pwr_long_flag     = true;
-        if (pmu.isPekeyPositiveIrq())      pwr_released_flag = true;
         pmu.clearIrqStatus();
     }
 }
@@ -80,15 +73,5 @@ bool power_hal_is_vbus_in(void)  { return cached_vbus; }
 
 bool power_hal_pwr_pressed(void) {
     if (pwr_pressed_flag) { pwr_pressed_flag = false; return true; }
-    return false;
-}
-
-bool power_hal_pwr_long_pressed(void) {
-    if (pwr_long_flag) { pwr_long_flag = false; return true; }
-    return false;
-}
-
-bool power_hal_pwr_released(void) {
-    if (pwr_released_flag) { pwr_released_flag = false; return true; }
     return false;
 }

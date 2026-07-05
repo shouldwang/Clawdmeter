@@ -132,15 +132,14 @@ static lv_obj_t* battery_img;
 static lv_obj_t* logo_img;
 static lv_image_dsc_t battery_dscs[5];  // empty, low, medium, full, charging
 
-// ---- Live-data freshness → which usage sub-view to show ----
-// usage panels when data is flowing, an idle "Zzz" screen when the host is
-// connected but no usage update landed within DATA_FRESH_MS, the pairing hint
-// when the USB host is down. Re-evaluated every loop in ui_tick_anim().
+// ---- Data availability → which usage sub-view to show ----
+// Keep the last valid usage visible across transient API/poll failures. The idle
+// "Zzz" screen is only for a connected host that has supplied no data since boot;
+// the pairing hint is shown when the USB host is down.
 static lv_obj_t* idle_group;            // the "Zzz" idle screen
-static uint32_t  last_data_ms = 0;      // lv_tick when the last valid usage update landed
+static uint32_t  last_data_ms = 0;      // clock sync base for the last valid update
 static bool      data_received = false; // any valid update since boot
 static int       view_state = -1;       // -1 unknown / 0 pair / 1 idle / 2 usage
-static const uint32_t DATA_FRESH_MS = 90000;  // usage counts as "live" within this window (daemon sends ~60s)
 
 // ---- Shared ----
 static lv_image_dsc_t logo_dsc;
@@ -551,16 +550,15 @@ void ui_update(const UsageData* data) {
 }
 
 // Pick the usage-view sub-screen: USB-disconnected hint, the idle "Zzz" screen
-// (connected but data has gone stale), or the live usage panels. Only re-lays-out
-// on an actual change. The animated status line stays visible everywhere — it
-// reads "Listening…" on the idle screen, keeping it alive rather than frozen.
+// (connected but no valid data received since boot), or the usage panels holding
+// the latest valid values. Only re-lays-out on an actual change.
 static void update_view_state(void) {
     if (!usage_group || !pair_group || !idle_group) return;
     int v;
     if (!s_usb_connected) {
         v = 0;  // USB-disconnected hint
-    } else if (data_received && (lv_tick_get() - last_data_ms) < DATA_FRESH_MS) {
-        v = 2;  // live usage
+    } else if (data_received) {
+        v = 2;  // latest valid usage, retained across poll failures
     } else {
         v = 1;  // idle / Zzz
     }
@@ -640,8 +638,7 @@ static void apply_battery_visibility(void) {
 
 static void global_click_cb(lv_event_t* e) {
     (void)e;
-    if (current_screen == SCREEN_SPLASH) ui_show_screen(prev_non_splash_screen);
-    else                                  ui_show_screen(SCREEN_SPLASH);
+    ui_toggle_splash();
 }
 
 void ui_show_screen(screen_t screen) {
@@ -673,8 +670,7 @@ void ui_toggle_splash(void) {
 // same as ui_toggle_splash. Phase 4 adds lightbox into the rotation, at
 // which point this stops being a plain toggle.
 void ui_cycle_screen(void) {
-    if (current_screen == SCREEN_SPLASH) ui_show_screen(prev_non_splash_screen);
-    else                                  ui_show_screen(SCREEN_SPLASH);
+    ui_toggle_splash();
 }
 
 screen_t ui_get_current_screen(void) {
@@ -686,7 +682,7 @@ void ui_update_usb_status(bool connected) {
     s_usb_connected = connected;
 
     if (s_usb_connected && !was_connected) connected_at_ms = lv_tick_get();
-    // pair / idle / usage — picked from connection + data freshness.
+    // pair / idle / usage — picked from connection + data availability.
     update_view_state();
 }
 
