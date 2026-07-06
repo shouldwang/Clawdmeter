@@ -1,0 +1,4 @@
+# macOS/Linux USB daemon dependency manifest for install-mac.sh.
+# Pinned exact versions — bump deliberately, not via range specifiers.
+httpx==0.28.1
+pyserial==3.5

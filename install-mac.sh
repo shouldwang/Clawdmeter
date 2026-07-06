@@ -175,7 +175,7 @@ if [ ! -d "$VENV_DIR" ]; then
     "$PYTHON3" -m venv "$VENV_DIR"
 fi
 "$VENV_DIR/bin/pip" install --quiet --upgrade pip
-"$VENV_DIR/bin/pip" install --quiet "httpx>=0.27" "pyserial>=3.5"
+"$VENV_DIR/bin/pip" install --quiet -r "$SCRIPT_DIR/daemon/requirements-macos.txt"
 PYTHON_BIN="$VENV_DIR/bin/python"
 echo "  OK ($PYTHON_BIN)"
 echo ""
