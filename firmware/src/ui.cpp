@@ -11,6 +11,9 @@ LV_FONT_DECLARE(font_tiempos_56);
 LV_FONT_DECLARE(font_tiempos_34);
 LV_FONT_DECLARE(font_styrene_48);
 LV_FONT_DECLARE(font_styrene_28);
+LV_FONT_DECLARE(font_tiempos_60);
+LV_FONT_DECLARE(font_styrene_96);
+LV_FONT_DECLARE(font_styrene_36);
 LV_FONT_DECLARE(font_styrene_24);
 LV_FONT_DECLARE(font_styrene_20);
 LV_FONT_DECLARE(font_styrene_16);
@@ -473,26 +476,46 @@ static void init_stock_screen(lv_obj_t* scr) {
     lv_obj_add_event_cb(stock_container, global_click_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(stock_container, LV_OBJ_FLAG_HIDDEN);
 
-    lv_obj_t* panel = make_panel(stock_container, L.margin, L.content_y, L.content_w,
-                                  L.usage_panel_h * 2 + L.usage_panel_gap);
+    // Full-bleed card (screen minus L.margin on every side) — symbol pinned
+    // to the top, price+change grouped and pinned to the bottom, via flex
+    // column with space-between (mirrors the confirmed HTML mockup).
+    lv_obj_t* panel = lv_obj_create(stock_container);
+    lv_obj_set_pos(panel, L.margin, L.margin);
+    lv_obj_set_size(panel, L.scr_w - 2 * L.margin, L.scr_h - 2 * L.margin);
+    lv_obj_set_style_bg_color(panel, COL_PANEL, 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(panel, 8, 0);
+    lv_obj_set_style_border_width(panel, 0, 0);
+    lv_obj_set_style_pad_all(panel, 32, 0);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(panel, LV_OBJ_FLAG_EVENT_BUBBLE);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
     lbl_stock_symbol = lv_label_create(panel);
     lv_label_set_text(lbl_stock_symbol, "---");
-    lv_obj_set_style_text_font(lbl_stock_symbol, &font_tiempos_56, 0);
+    lv_obj_set_style_text_font(lbl_stock_symbol, &font_tiempos_60, 0);
     lv_obj_set_style_text_color(lbl_stock_symbol, COL_TEXT, 0);
-    lv_obj_set_pos(lbl_stock_symbol, 0, 0);
 
-    lbl_stock_price = lv_label_create(panel);
+    lv_obj_t* bottom_group = lv_obj_create(panel);
+    lv_obj_set_size(bottom_group, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(bottom_group, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(bottom_group, 0, 0);
+    lv_obj_set_style_pad_all(bottom_group, 0, 0);
+    lv_obj_clear_flag(bottom_group, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(bottom_group, LV_OBJ_FLAG_EVENT_BUBBLE);
+
+    lbl_stock_price = lv_label_create(bottom_group);
     lv_label_set_text(lbl_stock_price, "---");
-    lv_obj_set_style_text_font(lbl_stock_price, &font_styrene_48, 0);
+    lv_obj_set_style_text_font(lbl_stock_price, &font_styrene_96, 0);
     lv_obj_set_style_text_color(lbl_stock_price, COL_TEXT, 0);
-    lv_obj_align_to(lbl_stock_price, lbl_stock_symbol, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 16);
+    lv_obj_set_pos(lbl_stock_price, 0, 0);
 
-    lbl_stock_change = lv_label_create(panel);
+    lbl_stock_change = lv_label_create(bottom_group);
     lv_label_set_text(lbl_stock_change, "---");
-    lv_obj_set_style_text_font(lbl_stock_change, &font_styrene_28, 0);
+    lv_obj_set_style_text_font(lbl_stock_change, &font_styrene_36, 0);
     lv_obj_set_style_text_color(lbl_stock_change, COL_TEXT, 0);
-    lv_obj_align_to(lbl_stock_change, lbl_stock_price, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 12);
+    lv_obj_align_to(lbl_stock_change, lbl_stock_price, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 16);
 
     lbl_stock_empty = lv_label_create(stock_container);
     lv_label_set_text(lbl_stock_empty, "No stocks configured");
@@ -506,20 +529,30 @@ static void init_stock_screen(lv_obj_t* scr) {
 // Flat: neutral text, no triangle. Color and glyph are always shown
 // together (never color-only) so the state reads correctly for colorblind
 // users too. THEME_GREEN/THEME_RED (COL_GREEN/COL_RED) are the same tokens
-// already used by the usage screen's pace indicator — no new colors.
+// already used by the usage screen's pace indicator — no new colors. The
+// price label now carries the same color as the change line. The daemon
+// only sends price + pct_change, so the absolute change shown in the
+// "(N.NN)" part is derived on-device from those two values.
 static void render_stock_quote(const StockQuote& q) {
     lv_label_set_text(lbl_stock_symbol, q.symbol);
     lv_label_set_text_fmt(lbl_stock_price, "%.2f", q.price);
 
-    char buf[24];
+    char buf[32];
     if (q.pct_change > 0.0f) {
-        snprintf(buf, sizeof(buf), "\xE2\x96\xB2 %.2f%%", q.pct_change);
+        float prev_close = q.price / (1.0f + q.pct_change / 100.0f);
+        float abs_change = q.price - prev_close;
+        snprintf(buf, sizeof(buf), "\xE2\x96\xB2 %.2f (%.2f%%)", abs_change, q.pct_change);
+        lv_obj_set_style_text_color(lbl_stock_price, COL_GREEN, 0);
         lv_obj_set_style_text_color(lbl_stock_change, COL_GREEN, 0);
     } else if (q.pct_change < 0.0f) {
-        snprintf(buf, sizeof(buf), "\xE2\x96\xBC %.2f%%", -q.pct_change);
+        float prev_close = q.price / (1.0f + q.pct_change / 100.0f);
+        float abs_change = prev_close - q.price;
+        snprintf(buf, sizeof(buf), "\xE2\x96\xBC %.2f (%.2f%%)", abs_change, -q.pct_change);
+        lv_obj_set_style_text_color(lbl_stock_price, COL_RED, 0);
         lv_obj_set_style_text_color(lbl_stock_change, COL_RED, 0);
     } else {
         snprintf(buf, sizeof(buf), "%.2f%%", q.pct_change);
+        lv_obj_set_style_text_color(lbl_stock_price, COL_TEXT, 0);
         lv_obj_set_style_text_color(lbl_stock_change, COL_TEXT, 0);
     }
     lv_label_set_text(lbl_stock_change, buf);
