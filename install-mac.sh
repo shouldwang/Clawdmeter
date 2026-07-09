@@ -37,15 +37,17 @@ upsert_config_key() {
 
 # Detect ~/.claude* config dirs and, if more than one is found, let the user pick
 # which plans to show. The daemon polls all chosen dirs and displays whichever is
-# active. macOS note: the default ~/.claude stores its token in Keychain (often no
-# .credentials.json file), so it always counts as a candidate; additional dirs are
-# recognised by their credentials file — matching the daemon's read_token_for.
+# active. macOS note: EVERY config dir's token lives in Keychain, not a
+# .credentials.json file (that's a Linux-only artifact) — so gating candidates on
+# that file's presence silently drops every non-default dir on macOS. Any
+# ~/.claude* directory that looks like a real Claude Code config dir (has
+# .claude.json, the CLI's own state file) counts as a candidate instead.
 configure_config_dirs() {
     local -a candidates=()
     local d
     for d in "$HOME"/.claude*; do
         [ -d "$d" ] || continue
-        if [ -f "$d/.credentials.json" ] || [ "$d" = "$HOME/.claude" ]; then
+        if [ -f "$d/.credentials.json" ] || [ -f "$d/.claude.json" ] || [ "$d" = "$HOME/.claude" ]; then
             candidates+=("$d")
         fi
     done
