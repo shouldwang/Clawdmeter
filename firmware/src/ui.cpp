@@ -373,7 +373,9 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_label_set_text(lbl_title, "Usage");
     lv_obj_set_style_text_font(lbl_title, &font_tiempos_56, 0);
     lv_obj_set_style_text_color(lbl_title, COL_TEXT, 0);
-    lv_obj_align(lbl_title, LV_ALIGN_TOP_MID, 16, L.title_y);
+    // x/y re-centered in ui_init() once the logo and badge exist and their
+    // real heights are known — this initial align just gets it on-screen.
+    lv_obj_align(lbl_title, LV_ALIGN_TOP_MID, 0, L.title_y);
 
     // Usage panels (shown when connected) live in a transparent full-size group
     // so they can be toggled against the pairing hint as one unit.
@@ -462,8 +464,19 @@ void ui_init(void) {
     lv_obj_set_style_pad_top(who_badge, 3, 0);
     lv_obj_set_style_pad_bottom(who_badge, 3, 0);
     lv_obj_add_flag(who_badge, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_align(who_badge, LV_ALIGN_TOP_RIGHT, -L.margin, L.title_y);
 
+    // Header row: logo, "Usage" title, and the Self/Work badge share one
+    // horizontal line. The logo is tallest and fixed at the top, so the
+    // other two are vertically re-centered to its middle using their own
+    // measured height (font metrics differ, so a hand-picked offset drifts
+    // whenever a font changes).
+    // A freshly created/styled label's auto-sized height isn't resolved into
+    // obj->coords until a layout pass runs — lv_obj_get_height() right after
+    // creation would read a stale (zero) value. Force that pass now.
+    lv_obj_update_layout(scr);
+    int16_t header_center_y = (L.title_y - 10) + LOGO_HEIGHT / 2;
+    lv_obj_align(lbl_title, LV_ALIGN_TOP_MID, 0, header_center_y - lv_obj_get_height(lbl_title) / 2);
+    lv_obj_align(who_badge, LV_ALIGN_TOP_RIGHT, -L.margin, header_center_y - lv_obj_get_height(who_badge) / 2);
 }
 
 static void apply_who_badge_visibility(void);
