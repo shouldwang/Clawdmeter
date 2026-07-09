@@ -67,9 +67,11 @@ firmware/src/
     waveshare_amoled_18_c6/ — C6: SH8601 + FT3168 + AXP PKEY + TCA9554 (gates power), no PSRAM
     template/               — copy this to bootstrap a new port
   main.cpp                  — setup() + loop(): HAL calls only, zero #ifdef BOARD_*
-  ui.{h,cpp}                — 2-screen UI (splash, usage; a lightbox third screen is planned but paused — see docs/plans/usb-transport-lightbox.md Phase 4). compute_layout() picks fonts/positions from board_caps() (responsive — current breakpoint: H >= 460 → large, else compact)
+  ui.{h,cpp}                — multi-screen UI (splash, usage, lightbox, stock). Lightbox reads memes (PNG/GIF) from the SPIFFS partition via memefs.{h,cpp} — see docs/plans/usb-transport-lightbox.md Phase 4; only wired up on waveshare_amoled_216 (LV_USE_LODEPNG/LV_USE_GIF build flags + `LV_USE_STDLIB_MALLOC=LV_STDLIB_CLIB` so decode buffers go through system malloc → PSRAM instead of LVGL's 64KB builtin pool — without it decode fails silently and the screen is black; verified on hardware 2026-07-09), other boards report zero memes and show the empty state. compute_layout() picks fonts/positions from board_caps() (responsive — current breakpoint: H >= 460 → large, else compact)
   splash.{h,cpp}            — 20×20 pixel-art engine. CELL = min(W,H)/20, centered.
   usb_hid.{h,cpp}           — USB HID keyboard (TinyUSB, S3 only); C6 boards get a no-op stub
+  memefs.{h,cpp}            — lightbox meme source: mounts SPIFFS, registers an LVGL fs driver on letter 'S', scans /memes/ for .png/.gif. Stubs to zero memes when LV_USE_LODEPNG/LV_USE_GIF aren't both set (all boards except waveshare_amoled_216)
+  gif_player.{h,cpp}        — lightbox GIF playback: drives LVGL's vendored AnimatedGIF engine directly in GIF_DRAW_COOKED mode and feeds complete RGB565 frames to a plain lv_image. Replaces the lv_gif widget, whose blend layer breaks transparency-optimized GIFs (alpha-punched to black) — see docs/plans/usb-transport-lightbox.md "Phase 4 後續". Any GIF works as-is, no ffmpeg re-encoding constraints. Stubs when LV_USE_GIF unset
   data.h                    — UsageData struct (includes `who`, the Self/Work profile label used by the profile badge — added d9c3925)
   icons.h                   — icon arrays. Battery (5×) are RGB565A8 with alpha; rest are raw RGB565.
   logo.h                    — 80×80 RGB565 logo
@@ -103,7 +105,7 @@ Device path differs by OS: `/dev/cu.usbmodem*` on macOS, `/dev/ttyACM0` on Linux
 
 ## QA your own UI changes — don't ask the user
 
-The firmware ships a `screenshot` serial command that dumps the LVGL framebuffer. `./screenshot.sh out.png [port]` captures a PNG sized to the active display (480×480 or 368×448). **Use this on every UI iteration** — Read the PNG with the Read tool, verify the change visually, iterate. Script auto-picks the macOS/Linux default port and falls back to pio's bundled Python if pyserial isn't on the system Python.
+The firmware ships a `screenshot` serial command that dumps the LVGL framebuffer, and a `lightbox_next` serial command that acts like a middle-button press on the lightbox screen (added 2026-07-09 so meme cycling can be QA'd remotely). `./screenshot.sh out.png [port]` captures a PNG sized to the active display (480×480 or 368×448). **Use this on every UI iteration** — Read the PNG with the Read tool, verify the change visually, iterate. Script auto-picks the macOS/Linux default port and falls back to pio's bundled Python if pyserial isn't on the system Python.
 
 The boot screen is `SCREEN_SPLASH` and only advances on a physical button press, so a fresh flash will sit on the splash. To screenshot the screen you're actually editing without asking the user to press a button, **temporarily change the default boot screen** in `main.cpp` (search for `ui_show_screen(SCREEN_SPLASH);`) to `SCREEN_USAGE`, do your iteration, then revert before committing.
 
