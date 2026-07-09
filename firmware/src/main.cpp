@@ -313,9 +313,10 @@ void loop() {
     if (!idle_is_asleep()) display_hal_tick();
 
     // ---- Physical buttons ----
-    //   PRIMARY   → cycle screen (splash <-> usage; Phase 4 adds lightbox)
+    //   PRIMARY   → cycle screen (splash -> usage -> lightbox -> stock -> splash)
     //   SECONDARY → USB HID Shift+Tab (mode toggle; only if the board has one)
-    //   PWR       → on splash: cycle animations; on usage: cycle brightness
+    //   PWR       → on splash: cycle animations; on stock: cycle symbol;
+    //               otherwise (usage, lightbox placeholder): cycle brightness
     // First press from sleep is consumed as a wake-only event by
     // idle_consume_wake_press(); the normal action fires from the second
     // press. Activity bookkeeping happens inside idle_consume_wake_press
@@ -352,10 +353,14 @@ void loop() {
 
         if (power_hal_pwr_pressed()) {
             if (!idle_consume_wake_press()) {
-                // On splash: cycle animations. On the usage view: cycle
-                // screen brightness (single non-splash view, no more screens).
-                if (ui_get_current_screen() == SCREEN_SPLASH) splash_next();
-                else                                          brightness_cycle();
+                // Per-screen short-press action: splash cycles animations,
+                // stock-ticker cycles to the next symbol, everything else
+                // (usage, and the lightbox placeholder) cycles brightness.
+                switch (ui_get_current_screen()) {
+                case SCREEN_SPLASH: splash_next(); break;
+                case SCREEN_STOCK:  ui_stock_next(); break;
+                default:             brightness_cycle(); break;
+                }
             }
         }
     }
