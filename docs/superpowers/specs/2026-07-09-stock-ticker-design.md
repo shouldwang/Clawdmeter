@@ -89,12 +89,19 @@ firmware->daemon only sends acks).
 - `ui_cycle_screen()` (`ui.cpp:693`) changes from a toggle to
   `(current + 1) % SCREEN_COUNT`.
 - New `SCREEN_STOCK` panel in `ui.cpp`, following the `make_usage_panel()`
-  template (`ui.cpp:282-305`): large symbol label, price label, and a
-  change-direction row combining a unicode triangle glyph with the percent
-  value:
-  - Up (`c > 0`): green text, `▲` (U+25B2) prefix
-  - Down (`c < 0`): red text, `▼` (U+25BC) prefix
-  - Flat (`c == 0`): no triangle, neutral text color
+  template (`ui.cpp:282-305`) — same font (`font_styrene_28` and friends)
+  and panel/background tokens as the usage screen, no new visual language.
+  Large symbol label, price label, and a change-direction row combining a
+  unicode triangle glyph with the percent value:
+  - Up (`c > 0`): `THEME_GREEN` (`theme.h:11`, `#788c5d` — the same token
+    already used for the usage screen's under-80%/on-pace state), `▲`
+    (U+25B2) prefix
+  - Down (`c < 0`): `THEME_RED` (`theme.h:13`, `#c0392b` — same token used
+    for the usage screen's ≥80%/over-pace state), `▼` (U+25BC) prefix
+  - Flat (`c == 0`): no triangle, `THEME_TEXT` (neutral) color
+  - No new color tokens are introduced — reusing `THEME_GREEN`/`THEME_RED`
+    keeps the stock screen's color semantics consistent with the existing
+    usage-pace indicator instead of inventing a second red/green meaning.
   - Color and glyph are both always shown together — never color-only —
     so the state reads correctly for colorblind users too.
 - Middle-button short press on `SCREEN_STOCK`: `stock_index = (stock_index +
