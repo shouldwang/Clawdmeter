@@ -4,5 +4,6 @@ set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 DOTFILES_DIR="$(awk -F'"' '/^dotfiles_dir/{print $2}' "$REPO_ROOT/.agent/project.toml")"
+[ -d "$DOTFILES_DIR/harness-core" ] || { echo "[git-dev] 找不到 shared runtime：$DOTFILES_DIR/harness-core" >&2; exit 1; }
 
-exec bash "$DOTFILES_DIR/agent/scripts/project-types/git-dev/post-edit.sh"
+exec bash "$DOTFILES_DIR/harness-core/scripts/project-types/git-dev/post-edit.sh"

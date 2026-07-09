@@ -2,7 +2,6 @@
 
 import os
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -28,31 +27,34 @@ def dotfiles_dir(root: Path) -> str:
     return match.group(1)
 
 
-def compatible_python() -> str:
+def compatible_python(dotfiles: Path) -> str:
     if sys.version_info >= MIN_PYTHON:
         return sys.executable
 
-    for name in ("python3.13", "python3.12", "python3.11"):
-        candidate = shutil.which(name)
-        if candidate and subprocess.run(
-            [candidate, "-c", "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        ).returncode == 0:
+    # Delegate the compatible-Python search to run-python.sh so the version
+    # list (3.13/3.12/3.11) lives in exactly one place.
+    run_python = dotfiles / "harness-core" / "scripts" / "shared" / "run-python.sh"
+    result = subprocess.run(
+        ["/bin/bash", str(run_python), "--print-python"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        candidate = result.stdout.strip()
+        if candidate:
             return candidate
 
-    print(
-        '{"systemMessage":"[agent] hook 無法執行：需要 Python 3.11 以上版本，'
-        '但目前 PATH 找不到相容的 Python。"}'
-    )
-    raise SystemExit(78)
+    sys.stdout.write(result.stdout)
+    sys.stderr.write(result.stderr)
+    raise SystemExit(result.returncode or 78)
 
 
 def main() -> int:
     root = repo_root()
-    shared = Path(dotfiles_dir(root)) / "agent" / "scripts" / "project-types" / "git-dev" / "git-dev-hook.py"
-    python = compatible_python()
+    dotfiles = Path(dotfiles_dir(root))
+    shared = dotfiles / "harness-core" / "scripts" / "project-types" / "git-dev" / "git-dev-hook.py"
+    python = compatible_python(dotfiles)
     os.execv(python, [python, str(shared), *sys.argv[1:]])
 
 
