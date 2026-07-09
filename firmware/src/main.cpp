@@ -12,6 +12,7 @@
 #include "idle.h"
 #include "idle_cfg.h"
 #include "brightness.h"
+#include "memefs.h"
 
 #include "hal/board_caps.h"
 #include "hal/display_hal.h"
@@ -229,6 +230,13 @@ static void check_serial_cmd() {
             cmd_buf[cmd_pos] = '\0';
             if (strcmp(cmd_buf, "screenshot") == 0) send_screenshot();
             else if (strcmp(cmd_buf, "buzz") == 0)  sound_hal_play_reset();
+            // QA helper: same as a middle-button press on the lightbox
+            // screen, so meme cycling can be exercised over serial together
+            // with `screenshot` (physical buttons can't be pressed remotely).
+            else if (strcmp(cmd_buf, "lightbox_next") == 0) {
+                ui_lightbox_next();
+                Serial.println("{\"lightbox_next\":true}");
+            }
             else if (cmd_buf[0] == '{') {
                 if (handle_usage_json(cmd_buf)) Serial.println("{\"ack\":true}");
                 else                            Serial.println("{\"err\":true}");
@@ -288,6 +296,7 @@ void setup() {
 
     usb_hid_init();
     input_hal_init();
+    memefs_init();  // no-op / zero memes on boards without PNG+GIF decoders enabled
 
     ui_init();
     ui_update_usb_status(usb_hid_link_up());
@@ -316,7 +325,7 @@ void loop() {
     //   PRIMARY   → cycle screen (splash -> usage -> lightbox -> stock -> splash)
     //   SECONDARY → USB HID Shift+Tab (mode toggle; only if the board has one)
     //   PWR       → on splash: cycle animations; on stock: cycle symbol;
-    //               otherwise (usage, lightbox placeholder): cycle brightness
+    //               on lightbox: cycle meme; otherwise (usage): cycle brightness
     // First press from sleep is consumed as a wake-only event by
     // idle_consume_wake_press(); the normal action fires from the second
     // press. Activity bookkeeping happens inside idle_consume_wake_press
@@ -354,12 +363,13 @@ void loop() {
         if (power_hal_pwr_pressed()) {
             if (!idle_consume_wake_press()) {
                 // Per-screen short-press action: splash cycles animations,
-                // stock-ticker cycles to the next symbol, everything else
-                // (usage, and the lightbox placeholder) cycles brightness.
+                // stock-ticker cycles to the next symbol, lightbox cycles to
+                // the next meme, everything else (usage) cycles brightness.
                 switch (ui_get_current_screen()) {
-                case SCREEN_SPLASH: splash_next(); break;
-                case SCREEN_STOCK:  ui_stock_next(); break;
-                default:             brightness_cycle(); break;
+                case SCREEN_SPLASH:   splash_next(); break;
+                case SCREEN_STOCK:    ui_stock_next(); break;
+                case SCREEN_LIGHTBOX: ui_lightbox_next(); break;
+                default:              brightness_cycle(); break;
                 }
             }
         }

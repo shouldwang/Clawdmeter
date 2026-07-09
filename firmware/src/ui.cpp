@@ -4,6 +4,8 @@
 #include <time.h>
 #include "logo.h"
 #include "icons.h"
+#include "memefs.h"
+#include "gif_player.h"
 #include "hal/board_caps.h"
 
 // Custom fonts (scaled for 314 PPI, ~1.9x from original 165 PPI)
@@ -106,6 +108,10 @@ static void compute_layout(const BoardCaps& c) {
 // ---- Usage screen widgets (single non-splash view) ----
 static lv_obj_t* usage_container;
 static lv_obj_t* lightbox_container;
+static lv_obj_t* lightbox_img;    // lv_image, shown for the current .png meme
+static lv_obj_t* lightbox_gif;    // lv_image fed by gif_player, for .gif memes
+static lv_obj_t* lbl_lightbox_empty;
+static int lightbox_index = 0;
 static lv_obj_t* stock_container;
 static lv_obj_t* lbl_stock_symbol;
 static lv_obj_t* lbl_stock_price;
@@ -443,9 +449,10 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_align(lbl_anim, LV_ALIGN_BOTTOM_MID, 0, -15);
 }
 
-// Placeholder for the Phase 4 lightbox (memes from SPIFFS) — real content is
-// separate future work (docs/plans/usb-transport-lightbox.md). This exists
-// so the 4-screen cycle has a real stop here today instead of a gap.
+// Lightbox screen (docs/plans/usb-transport-lightbox.md Phase 4) — displays
+// memes read from the device's SPIFFS partition via memefs.cpp. On boards
+// without the PNG/GIF decoders enabled, memefs reports zero memes and this
+// screen just shows its empty state — no #ifdef BOARD_* needed here.
 static void init_lightbox_screen(lv_obj_t* scr) {
     lightbox_container = lv_obj_create(scr);
     lv_obj_set_size(lightbox_container, L.scr_w, L.scr_h);
@@ -458,11 +465,88 @@ static void init_lightbox_screen(lv_obj_t* scr) {
     lv_obj_add_event_cb(lightbox_container, global_click_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(lightbox_container, LV_OBJ_FLAG_HIDDEN);
 
-    lv_obj_t* lbl = lv_label_create(lightbox_container);
-    lv_label_set_text(lbl, "Lightbox coming soon");
-    lv_obj_set_style_text_font(lbl, &font_styrene_28, 0);
-    lv_obj_set_style_text_color(lbl, COL_DIM, 0);
-    lv_obj_center(lbl);
+    // Both widgets are pinned full-screen with COVER alignment: the source
+    // keeps its aspect ratio, is scaled until it fills the screen, and
+    // whatever overflows is cropped (lv_gif inherits lv_image, so the same
+    // property drives both).
+    lightbox_img = lv_image_create(lightbox_container);
+    lv_obj_set_size(lightbox_img, L.scr_w, L.scr_h);
+    lv_obj_set_pos(lightbox_img, 0, 0);
+    lv_image_set_inner_align(lightbox_img, LV_IMAGE_ALIGN_COVER);
+    lv_obj_add_flag(lightbox_img, LV_OBJ_FLAG_HIDDEN);
+
+#if LV_USE_GIF
+    // Plain lv_image driven by gif_player (COOKED-mode AnimatedGIF), NOT an
+    // lv_gif widget — lv_gif's own blend layer breaks transparency-optimized
+    // GIFs (see gif_player.h).
+    lightbox_gif = lv_image_create(lightbox_container);
+    lv_obj_set_size(lightbox_gif, L.scr_w, L.scr_h);
+    lv_obj_set_pos(lightbox_gif, 0, 0);
+    lv_image_set_inner_align(lightbox_gif, LV_IMAGE_ALIGN_COVER);
+    // An upscaled GIF redraws the full screen every frame; bilinear sampling
+    // can't keep up on this panel (visible top-to-bottom sweep), so use
+    // nearest-neighbor for the GIF only — memes don't miss the filtering.
+    lv_image_set_antialias(lightbox_gif, false);
+    gif_player_attach(lightbox_gif);
+    lv_obj_add_flag(lightbox_gif, LV_OBJ_FLAG_HIDDEN);
+#endif
+
+    lbl_lightbox_empty = lv_label_create(lightbox_container);
+    lv_label_set_text(lbl_lightbox_empty, "No memes found");
+    lv_obj_set_style_text_font(lbl_lightbox_empty, &font_styrene_28, 0);
+    lv_obj_set_style_text_color(lbl_lightbox_empty, COL_DIM, 0);
+    lv_obj_center(lbl_lightbox_empty);
+    lv_obj_add_flag(lbl_lightbox_empty, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void redraw_lightbox_screen(void) {
+    if (!lightbox_container) return;
+
+    int n = memefs_count();
+    if (n == 0) {
+        lv_obj_add_flag(lightbox_img, LV_OBJ_FLAG_HIDDEN);
+#if LV_USE_GIF
+        gif_player_stop();
+        lv_obj_add_flag(lightbox_gif, LV_OBJ_FLAG_HIDDEN);
+#endif
+        lv_obj_clear_flag(lbl_lightbox_empty, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_add_flag(lbl_lightbox_empty, LV_OBJ_FLAG_HIDDEN);
+
+    if (lightbox_index >= n) lightbox_index = 0;
+    const char* path = memefs_path(lightbox_index);
+
+#if LV_USE_GIF
+    if (memefs_is_gif(lightbox_index)) {
+        lv_obj_add_flag(lightbox_img, LV_OBJ_FLAG_HIDDEN);
+        if (gif_player_open(path)) {
+            lv_obj_clear_flag(lightbox_gif, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            // Open failure already logged over serial; leave the widget
+            // hidden rather than showing a stale frame.
+            lv_obj_add_flag(lightbox_gif, LV_OBJ_FLAG_HIDDEN);
+        }
+    } else
+#endif
+    {
+#if LV_USE_GIF
+        // The GIF widget is the later sibling (drawn on top): leaving it
+        // visible covers the PNG entirely. Stopping the player also frees
+        // its decode buffers and halts per-frame CPU work.
+        gif_player_stop();
+        lv_obj_add_flag(lightbox_gif, LV_OBJ_FLAG_HIDDEN);
+#endif
+        lv_image_set_src(lightbox_img, path);
+        lv_obj_clear_flag(lightbox_img, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void ui_lightbox_next(void) {
+    int n = memefs_count();
+    if (n == 0) return;
+    lightbox_index = (lightbox_index + 1) % n;
+    redraw_lightbox_screen();
 }
 
 static void init_stock_screen(lv_obj_t* scr) {
@@ -845,11 +929,20 @@ void ui_show_screen(screen_t screen) {
     lv_obj_add_flag(lightbox_container, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(stock_container, LV_OBJ_FLAG_HIDDEN);
     splash_hide();
+    // Leaving (or re-entering) the lightbox: release the GIF decode buffers.
+    // redraw_lightbox_screen() below re-opens the current meme if needed.
+    gif_player_stop();
 
     switch (screen) {
     case SCREEN_SPLASH:   splash_show(); break;
     case SCREEN_USAGE:    lv_obj_clear_flag(usage_container, LV_OBJ_FLAG_HIDDEN); break;
-    case SCREEN_LIGHTBOX: lv_obj_clear_flag(lightbox_container, LV_OBJ_FLAG_HIDDEN); break;
+    case SCREEN_LIGHTBOX:
+        lv_obj_clear_flag(lightbox_container, LV_OBJ_FLAG_HIDDEN);
+        // Re-scan on entry so a fresh `pio run -t uploadfs` (per the spec's
+        // update flow) is picked up without a reboot.
+        memefs_rescan();
+        redraw_lightbox_screen();
+        break;
     case SCREEN_STOCK:
         lv_obj_clear_flag(stock_container, LV_OBJ_FLAG_HIDDEN);
         redraw_stock_screen();
