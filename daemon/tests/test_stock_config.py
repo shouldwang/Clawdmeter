@@ -5,6 +5,7 @@ read_stock_symbols (config parsing) and add_stock_field (payload assembly).
 Run: python -m pytest daemon/tests/test_stock_config.py -x -q
 """
 import asyncio
+import json
 from unittest.mock import AsyncMock
 
 import daemon.usage_core as mod
@@ -93,3 +94,11 @@ def test_add_stock_field_omits_key_when_all_symbols_fail(monkeypatch):
     payload = {}
     _run(mod.add_stock_field(payload))
     assert "stock" not in payload
+
+
+def test_add_stock_field_full_payload_fits_firmware_buffer(monkeypatch):
+    monkeypatch.setattr(mod, "read_stock_symbols", lambda: ["AAAAA"] * 5)
+    monkeypatch.setattr(mod, "fetch_quote", AsyncMock(return_value={"s": "AAAAA", "p": 12345.67, "c": -123.45}))
+    payload = {}
+    _run(mod.add_stock_field(payload))
+    assert len(json.dumps(payload, separators=(",", ":"))) < 512
