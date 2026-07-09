@@ -103,6 +103,15 @@ static void compute_layout(const BoardCaps& c) {
 // ---- Usage screen widgets (single non-splash view) ----
 static lv_obj_t* usage_container;
 static lv_obj_t* lightbox_container;
+static lv_obj_t* stock_container;
+static lv_obj_t* lbl_stock_symbol;
+static lv_obj_t* lbl_stock_price;
+static lv_obj_t* lbl_stock_change;
+static lv_obj_t* lbl_stock_empty;
+
+static StockQuote known_stocks[MAX_STOCKS];
+static int known_stock_count = 0;
+static int stock_display_index = 0;
 static lv_obj_t* lbl_title;
 // Clock fed by the daemon: base epoch (local wall-clock seconds) + the lv_tick at
 // which it landed, so the title ticks forward locally between 60s payloads.
@@ -453,6 +462,109 @@ static void init_lightbox_screen(lv_obj_t* scr) {
     lv_obj_center(lbl);
 }
 
+static void init_stock_screen(lv_obj_t* scr) {
+    stock_container = lv_obj_create(scr);
+    lv_obj_set_size(stock_container, L.scr_w, L.scr_h);
+    lv_obj_set_pos(stock_container, 0, 0);
+    lv_obj_set_style_bg_opa(stock_container, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(stock_container, 0, 0);
+    lv_obj_set_style_pad_all(stock_container, 0, 0);
+    lv_obj_clear_flag(stock_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(stock_container, global_click_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(stock_container, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t* panel = make_panel(stock_container, L.margin, L.content_y, L.content_w,
+                                  L.usage_panel_h * 2 + L.usage_panel_gap);
+
+    lbl_stock_symbol = lv_label_create(panel);
+    lv_label_set_text(lbl_stock_symbol, "---");
+    lv_obj_set_style_text_font(lbl_stock_symbol, &font_tiempos_56, 0);
+    lv_obj_set_style_text_color(lbl_stock_symbol, COL_TEXT, 0);
+    lv_obj_set_pos(lbl_stock_symbol, 0, 0);
+
+    lbl_stock_price = lv_label_create(panel);
+    lv_label_set_text(lbl_stock_price, "---");
+    lv_obj_set_style_text_font(lbl_stock_price, &font_styrene_48, 0);
+    lv_obj_set_style_text_color(lbl_stock_price, COL_TEXT, 0);
+    lv_obj_align_to(lbl_stock_price, lbl_stock_symbol, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 16);
+
+    lbl_stock_change = lv_label_create(panel);
+    lv_label_set_text(lbl_stock_change, "---");
+    lv_obj_set_style_text_font(lbl_stock_change, &font_styrene_28, 0);
+    lv_obj_set_style_text_color(lbl_stock_change, COL_TEXT, 0);
+    lv_obj_align_to(lbl_stock_change, lbl_stock_price, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 12);
+
+    lbl_stock_empty = lv_label_create(stock_container);
+    lv_label_set_text(lbl_stock_empty, "No stocks configured");
+    lv_obj_set_style_text_font(lbl_stock_empty, &font_styrene_28, 0);
+    lv_obj_set_style_text_color(lbl_stock_empty, COL_DIM, 0);
+    lv_obj_center(lbl_stock_empty);
+    lv_obj_add_flag(lbl_stock_empty, LV_OBJ_FLAG_HIDDEN);
+}
+
+// Up: green + up-triangle (U+25B2). Down: red + down-triangle (U+25BC).
+// Flat: neutral text, no triangle. Color and glyph are always shown
+// together (never color-only) so the state reads correctly for colorblind
+// users too. THEME_GREEN/THEME_RED (COL_GREEN/COL_RED) are the same tokens
+// already used by the usage screen's pace indicator — no new colors.
+static void render_stock_quote(const StockQuote& q) {
+    lv_label_set_text(lbl_stock_symbol, q.symbol);
+    lv_label_set_text_fmt(lbl_stock_price, "%.2f", q.price);
+
+    char buf[24];
+    if (q.pct_change > 0.0f) {
+        snprintf(buf, sizeof(buf), "\xE2\x96\xB2 %.2f%%", q.pct_change);
+        lv_obj_set_style_text_color(lbl_stock_change, COL_GREEN, 0);
+    } else if (q.pct_change < 0.0f) {
+        snprintf(buf, sizeof(buf), "\xE2\x96\xBC %.2f%%", -q.pct_change);
+        lv_obj_set_style_text_color(lbl_stock_change, COL_RED, 0);
+    } else {
+        snprintf(buf, sizeof(buf), "%.2f%%", q.pct_change);
+        lv_obj_set_style_text_color(lbl_stock_change, COL_TEXT, 0);
+    }
+    lv_label_set_text(lbl_stock_change, buf);
+}
+
+static void redraw_stock_screen(void) {
+    if (!stock_container) return;
+    if (known_stock_count == 0) {
+        lv_obj_add_flag(lbl_stock_symbol, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(lbl_stock_price, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(lbl_stock_change, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(lbl_stock_empty, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_clear_flag(lbl_stock_symbol, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(lbl_stock_price, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(lbl_stock_change, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(lbl_stock_empty, LV_OBJ_FLAG_HIDDEN);
+    if (stock_display_index >= known_stock_count) stock_display_index = 0;
+    render_stock_quote(known_stocks[stock_display_index]);
+}
+
+// Merges this cycle's quotes into the persistent known_stocks[] store by
+// symbol match. A symbol missing from this cycle's array (a transient
+// fetch failure upstream, per the daemon's error-handling contract) keeps
+// showing its last known value here rather than blanking — new symbols are
+// appended (bounded by MAX_STOCKS, which matches the daemon-side cap so
+// this can never overflow in practice).
+static void merge_stock_quotes(const StockQuote* incoming, int count) {
+    for (int i = 0; i < count; i++) {
+        int idx = -1;
+        for (int j = 0; j < known_stock_count; j++) {
+            if (strcmp(known_stocks[j].symbol, incoming[i].symbol) == 0) { idx = j; break; }
+        }
+        if (idx == -1 && known_stock_count < MAX_STOCKS) idx = known_stock_count++;
+        if (idx != -1) known_stocks[idx] = incoming[i];
+    }
+}
+
+void ui_stock_next(void) {
+    if (known_stock_count == 0) return;
+    stock_display_index = (stock_display_index + 1) % known_stock_count;
+    redraw_stock_screen();
+}
+
 // ======== Public API ========
 
 void ui_init(void) {
@@ -466,6 +578,7 @@ void ui_init(void) {
 
     init_usage_screen(scr);
     init_lightbox_screen(scr);
+    init_stock_screen(scr);
     splash_init(scr);
 
     if (splash_get_root()) {
@@ -588,6 +701,9 @@ void ui_update(const UsageData* data) {
         format_reset_time(data->weekly_reset_mins, buf, sizeof(buf));
         lv_label_set_text(lbl_weekly_reset, buf);
     }
+
+    merge_stock_quotes(data->stock, data->stock_count);
+    if (current_screen == SCREEN_STOCK) redraw_stock_screen();
 }
 
 // Pick the usage-view sub-screen: USB-disconnected hint, the idle "Zzz" screen
@@ -689,12 +805,17 @@ static void global_click_cb(lv_event_t* e) {
 void ui_show_screen(screen_t screen) {
     lv_obj_add_flag(usage_container, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(lightbox_container, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(stock_container, LV_OBJ_FLAG_HIDDEN);
     splash_hide();
 
     switch (screen) {
     case SCREEN_SPLASH:   splash_show(); break;
     case SCREEN_USAGE:    lv_obj_clear_flag(usage_container, LV_OBJ_FLAG_HIDDEN); break;
     case SCREEN_LIGHTBOX: lv_obj_clear_flag(lightbox_container, LV_OBJ_FLAG_HIDDEN); break;
+    case SCREEN_STOCK:
+        lv_obj_clear_flag(stock_container, LV_OBJ_FLAG_HIDDEN);
+        redraw_stock_screen();
+        break;
     default: break;
     }
 
