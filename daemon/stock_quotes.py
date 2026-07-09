@@ -73,17 +73,23 @@ async def fetch_quote(config_symbol: str) -> dict | None:
         log(f"Stock parse failed for {config_symbol}: {e}")
         return None
 
-    price = meta.get("regularMarketPrice")
-    if price is None:
-        log(f"Stock quote for {config_symbol} missing regularMarketPrice")
+    try:
+        price = meta.get("regularMarketPrice")
+        if price is None:
+            log(f"Stock quote for {config_symbol} missing regularMarketPrice")
+            return None
+
+        pct = meta.get("regularMarketChangePercent")
+        if pct is None:
+            prev_close = meta.get("chartPreviousClose")
+            if prev_close:
+                pct = (price - prev_close) / prev_close * 100
+            else:
+                pct = 0.0
+
+        result = {"s": to_display_symbol(config_symbol), "p": round(price, 2), "c": round(pct, 2)}
+    except (KeyError, IndexError, TypeError, ValueError, AttributeError) as e:
+        log(f"Stock quote for {config_symbol} had malformed meta/price data: {e}")
         return None
 
-    pct = meta.get("regularMarketChangePercent")
-    if pct is None:
-        prev_close = meta.get("chartPreviousClose")
-        if prev_close:
-            pct = (price - prev_close) / prev_close * 100
-        else:
-            pct = 0.0
-
-    return {"s": to_display_symbol(config_symbol), "p": round(price, 2), "c": round(pct, 2)}
+    return result

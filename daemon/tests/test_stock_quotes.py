@@ -120,3 +120,18 @@ def test_fetch_quote_returns_none_on_malformed_json(monkeypatch):
         mod.httpx, "AsyncClient",
         lambda **_kw: _FakeAsyncClient(_FakeResponse(200, {"unexpected": "shape"})))
     assert _run(mod.fetch_quote("TSLA")) is None
+
+
+def test_fetch_quote_returns_none_when_meta_is_null(monkeypatch):
+    monkeypatch.setattr(
+        mod.httpx, "AsyncClient",
+        lambda **_kw: _FakeAsyncClient(
+            _FakeResponse(200, {"chart": {"result": [{"meta": None}]}})))
+    assert _run(mod.fetch_quote("TSLA")) is None
+
+
+def test_fetch_quote_returns_none_on_non_numeric_price(monkeypatch):
+    monkeypatch.setattr(
+        mod.httpx, "AsyncClient",
+        lambda **_kw: _FakeAsyncClient(_chart_response("not-a-number")))
+    assert _run(mod.fetch_quote("TSLA")) is None
