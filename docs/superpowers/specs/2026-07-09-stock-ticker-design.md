@@ -52,22 +52,37 @@ firmware->daemon only sends acks).
 - New `daemon/stock_quotes.py`, following the existing `httpx.AsyncClient`
   pattern in `usage_core.py:271-278` (async client, `timeout=20.0`, no
   retry/backoff — errors are swallowed to `None` and logged, never raised).
+- Config symbol format ports `toYahooSymbol()` from the user's `finance-os`
+  project (`lib/market-data/yahoo.ts:102-107`): a plain ticker means US and
+  is used as-is (`"TSLA"`); a `TPE:`-prefixed ticker means Taiwan (`"TPE:0050"`).
+  Two derived forms per configured symbol:
+  - **Yahoo query symbol** (used only for the API call): strip the `TPE:`
+    prefix and append `.TW` — `"TPE:0050"` → `"0050.TW"`. Plain tickers are
+    unchanged.
+  - **Display symbol** (sent to firmware as `"s"`, and all the firmware ever
+    shows): strip everything up to and including the last `:` — `"TPE:0050"`
+    → `"0050"`, `"TSLA"` → `"TSLA"` (no colon, unchanged). The firmware never
+    sees or displays the exchange prefix or the `.TW` suffix.
+  - Only the `TPE:` prefix is supported for now (matching `finance-os`'s only
+    supported non-US case) — other exchange prefixes are out of scope (see
+    Out of scope).
 - For each configured symbol, `GET
-  query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d`
+  query1.finance.yahoo.com/v8/finance/chart/{yahoo_query_symbol}?interval=1d&range=1d`
   with header `User-Agent: Mozilla/5.0`. Extract from `chart.result[0].meta`:
   - price: `regularMarketPrice`
   - % change: `regularMarketChangePercent` (already a percentage, not a
     fraction), falling back to `(regularMarketPrice - chartPreviousClose) /
     chartPreviousClose * 100` if the direct field is absent
-  - symbol: the string the caller requested (not returned by `meta` itself)
+  - symbol: the **display symbol** derived above (not returned by `meta`
+    itself, and not the Yahoo query symbol used for the request)
 - Config: existing daemon config file gains a `stock_symbols` array (e.g.
-  `["TSLA", "2330.TW"]`), user-edited directly, no in-app management UI. Hard
+  `["TSLA", "TPE:0050"]`), user-edited directly, no in-app management UI. Hard
   cap of 5 symbols (see buffer-size note below).
 - Payload assembly: new `add_stock_field(payload)`, following the same
   conditional-key pattern as `add_chime_field()` / `add_clock_fields()`
   (`usage_core.py:222,252,323-324`) — only adds the `"stock"` key when
   `stock_symbols` is non-empty. Each entry uses short keys to stay wire-size
-  frugal: `{"s":"TSLA","p":123.45,"c":1.23}` (`s`=symbol, `p`=price,
+  frugal: `{"s":"0050","p":123.45,"c":1.23}` (`s`=display symbol, `p`=price,
   `c`=today's % change).
 - Per-symbol fetch failure: that symbol is simply omitted from this cycle's
   array (not replaced with a zero/null placeholder) — firmware keeps
