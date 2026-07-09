@@ -121,13 +121,26 @@ static bool parse_json(const char* json, UsageData* out) {
     out->clock_epoch = doc["t"] | 0L;
     out->clock_fmt = doc["tf"] | 24;
     out->ok = doc["ok"] | false;
+
+    JsonArray stock_arr = doc["stock"].as<JsonArray>();
+    out->stock_count = 0;
+    for (JsonVariant v : stock_arr) {
+        if (out->stock_count >= MAX_STOCKS) break;
+        StockQuote& q = out->stock[out->stock_count];
+        strlcpy(q.symbol, v["s"] | "", sizeof(q.symbol));
+        q.price = v["p"] | 0.0f;
+        q.pct_change = v["c"] | 0.0f;
+        out->stock_count++;
+    }
+
     out->valid = true;
     return true;
 }
 
 // ---- Serial command buffer ----
-// JSON usage payloads run ~80-120 bytes in practice; 256 leaves headroom.
-#define CMD_BUF_SIZE 256
+// JSON usage payloads run ~80-120 bytes in practice; stock quotes (up to
+// MAX_STOCKS entries) can add another ~150-200 bytes. 512 leaves headroom.
+#define CMD_BUF_SIZE 512
 static char cmd_buf[CMD_BUF_SIZE];
 static int cmd_pos = 0;
 static bool cmd_overflow = false;  // set when a line exceeds CMD_BUF_SIZE; dropped at the next newline
@@ -300,9 +313,10 @@ void loop() {
     if (!idle_is_asleep()) display_hal_tick();
 
     // ---- Physical buttons ----
-    //   PRIMARY   → cycle screen (splash <-> usage; Phase 4 adds lightbox)
+    //   PRIMARY   → cycle screen (splash -> usage -> lightbox -> stock -> splash)
     //   SECONDARY → USB HID Shift+Tab (mode toggle; only if the board has one)
-    //   PWR       → on splash: cycle animations; on usage: cycle brightness
+    //   PWR       → on splash: cycle animations; on stock: cycle symbol;
+    //               otherwise (usage, lightbox placeholder): cycle brightness
     // First press from sleep is consumed as a wake-only event by
     // idle_consume_wake_press(); the normal action fires from the second
     // press. Activity bookkeeping happens inside idle_consume_wake_press
@@ -339,10 +353,14 @@ void loop() {
 
         if (power_hal_pwr_pressed()) {
             if (!idle_consume_wake_press()) {
-                // On splash: cycle animations. On the usage view: cycle
-                // screen brightness (single non-splash view, no more screens).
-                if (ui_get_current_screen() == SCREEN_SPLASH) splash_next();
-                else                                          brightness_cycle();
+                // Per-screen short-press action: splash cycles animations,
+                // stock-ticker cycles to the next symbol, everything else
+                // (usage, and the lightbox placeholder) cycles brightness.
+                switch (ui_get_current_screen()) {
+                case SCREEN_SPLASH: splash_next(); break;
+                case SCREEN_STOCK:  ui_stock_next(); break;
+                default:             brightness_cycle(); break;
+                }
             }
         }
     }

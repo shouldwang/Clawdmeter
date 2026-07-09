@@ -1,6 +1,15 @@
 #pragma once
 #include <Arduino.h>
 
+#define MAX_STOCKS 5   // must match daemon/usage_core.py's MAX_STOCK_SYMBOLS
+
+struct StockQuote {
+    char symbol[10];   // display symbol, e.g. "TSLA", "0050" — daemon has
+                        // already stripped any exchange prefix/suffix
+    float price;
+    float pct_change;  // today's % change, signed
+};
+
 struct UsageData {
     float session_pct;       // utilization 0-100 (5h window Pro/Max; spending % Enterprise)
     int session_reset_mins;  // minutes until reset
@@ -15,6 +24,8 @@ struct UsageData {
     char reset_date[12];     // formatted reset date e.g. "Jul 1" (Enterprise)
     long clock_epoch;        // local wall-clock epoch (s) from daemon; 0 = not provided
     int  clock_fmt;          // 12 or 24 (hour format from daemon); defaults to 24
+    StockQuote stock[MAX_STOCKS];
+    int stock_count;         // entries valid in stock[] this cycle; 0 = no "stock" key or empty array
     bool ok;                 // data parse succeeded
     bool valid;              // false until first successful parse
 };
