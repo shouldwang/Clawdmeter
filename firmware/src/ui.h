@@ -4,7 +4,7 @@
 enum screen_t {
     SCREEN_SPLASH,
     SCREEN_USAGE,
-    SCREEN_LIGHTBOX,   // placeholder screen for now — see docs/plans/usb-transport-lightbox.md
+    SCREEN_LIGHTBOX,   // memes from SPIFFS — see docs/plans/usb-transport-lightbox.md Phase 4
     SCREEN_STOCK,
     SCREEN_COUNT,
 };
@@ -20,3 +20,4 @@ void ui_cycle_screen(void);
 screen_t ui_get_current_screen(void);
 void ui_update_usb_status(bool connected);
 void ui_stock_next(void);   // advances the stock-ticker screen to the next symbol
+void ui_lightbox_next(void); // advances the lightbox screen to the next meme
