@@ -360,57 +360,56 @@ def _billing_period_info(now: float, reset_ts: str) -> dict:
     }
 
 
-class PlanSelector:
-    """Decide which config dir's plan is "active" across polls.
+class ProfileRotator:
+    """Round-robins across up to 2 configured dirs, one step per poll cycle.
 
-    "Active" = the plan whose session % rose most recently (recent API activity).
-    A rise stamps a monotonic poll counter, so the choice is sticky and a window
-    reset (a drop to 0) isn't mistaken for use. Before any rise is seen (startup)
-    the highest current session % wins. Mirrors the Linux bash daemon.
+    Replaces the old activity-based PlanSelector: polling itself (a 1-token
+    Haiku ping) nudges the polled account's usage %, so "whoever's usage rose
+    most recently" was measuring the daemon's own traffic, not real usage.
+    A fixed rotation sidesteps that entirely.
     """
 
     def __init__(self) -> None:
-        self.prev_s: dict[Path, int] = {}
-        self.last_active: dict[Path, int] = {}
-        self.seq = 0
+        self.idx = 0
 
-    def choose(self, sessions: dict[Path, int]) -> Path:
-        """Update state from this cycle's {dir: session_pct} and return the active dir."""
-        self.seq += 1
-        for d, s in sessions.items():
-            if d in self.prev_s and s > self.prev_s[d]:
-                self.last_active[d] = self.seq
-            self.prev_s[d] = s
-        # Most recent activity wins; ties (and the startup case) break by highest %.
-        return max(sessions, key=lambda d: (self.last_active.get(d, 0), sessions[d]))
+    def next_index(self, count: int) -> int:
+        idx = self.idx % count
+        self.idx += 1
+        return idx
 
 
-# Module-level so the active-plan state survives reconnects (used by callers
-# that don't keep their own PlanSelector instance, e.g. the USB daemon).
-_SELECTOR = PlanSelector()
+# Module-level so rotation state survives reconnects (used by callers that
+# don't keep their own ProfileRotator instance, e.g. the USB daemon).
+_ROTATOR = ProfileRotator()
+
+_WHO_LABELS = ("Self", "Work")
 
 
-async def poll_active_payload(selector: PlanSelector = _SELECTOR) -> dict | None:
-    """Poll every configured config dir and return the active plan's payload.
+async def poll_active_payload(rotator: ProfileRotator = _ROTATOR) -> dict | None:
+    """Poll one profile this cycle and return its payload.
 
-    Returns None when no dir yields a usable payload this cycle. A single
-    configured dir (the default) collapses to exactly the old single-poll path.
+    A single configured dir (the default) always polls that dir, unlabeled —
+    exactly the old single-plan behavior. With 2 configured dirs (only the
+    first 2 of `config_dirs` are used), each call polls whichever dir is due
+    next and labels the payload "who": "Self" (index 0) or "Work" (index 1).
+    Returns None when the due dir has no token or the poll itself fails.
     """
-    dirs = read_config_dirs()
-    payloads: dict[Path, dict] = {}
-    sessions: dict[Path, int] = {}
-    for d in dirs:
+    dirs = read_config_dirs()[:2]
+    if len(dirs) == 1:
+        d = dirs[0]
         token = read_token_for(d)
         if not token:
             log(f"No token in {d}; skipping")
-            continue
-        payload = await poll_api(token)
-        if payload is not None:
-            payloads[d] = payload
-            sessions[d] = int(payload.get("s", 0) or 0)
-    if not payloads:
+            return None
+        return await poll_api(token)
+
+    idx = rotator.next_index(len(dirs))
+    d = dirs[idx]
+    token = read_token_for(d)
+    if not token:
+        log(f"No token in {d}; skipping")
         return None
-    active = selector.choose(sessions)
-    if len(dirs) > 1:
-        log(f"Active plan: {active} (s={sessions[active]})")
-    return payloads[active]
+    payload = await poll_api(token)
+    if payload is not None:
+        payload["who"] = _WHO_LABELS[idx]
+    return payload

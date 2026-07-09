@@ -28,7 +28,7 @@ from usage_core import (  # noqa: E402
     CONFIG_FILE,
     DEFAULT_CONFIG_DIR,
     POLL_INTERVAL,
-    PlanSelector,
+    ProfileRotator,
     _extract_access_token,
     _keychain_service_for,
     _read_token_keychain,
@@ -234,34 +234,40 @@ async def discover_target(skip_addr: str | None = None):
     return address
 
 
-# Module-level so the active-plan state survives reconnects.
-_SELECTOR = PlanSelector()
+# Module-level so rotation state survives reconnects.
+_ROTATOR = ProfileRotator()
+
+_WHO_LABELS = ("Self", "Work")
 
 
-async def poll_active_payload(selector: PlanSelector = _SELECTOR) -> dict | None:
-    """Poll every configured config dir and return the active plan's payload.
+async def poll_active_payload(rotator: ProfileRotator = _ROTATOR) -> dict | None:
+    """Poll one profile this cycle and return its payload.
 
-    Returns None when no dir yields a usable payload this cycle. A single
-    configured dir (the default) collapses to exactly the old single-poll path.
+    A single configured dir (the default) always polls that dir, unlabeled.
+    With 2 configured dirs (only the first 2 of `config_dirs` are used),
+    each call polls whichever dir is due next and labels the payload
+    "who": "Self" (index 0) or "Work" (index 1). Returns None when the due
+    dir has no token or the poll itself fails.
     """
-    dirs = read_config_dirs()
-    payloads: dict[Path, dict] = {}
-    sessions: dict[Path, int] = {}
-    for d in dirs:
+    dirs = read_config_dirs()[:2]
+    if len(dirs) == 1:
+        d = dirs[0]
         token = read_token_for(d)
         if not token:
             log(f"No token in {d}; skipping")
-            continue
-        payload = await poll_api(token)
-        if payload is not None:
-            payloads[d] = payload
-            sessions[d] = int(payload.get("s", 0) or 0)
-    if not payloads:
+            return None
+        return await poll_api(token)
+
+    idx = rotator.next_index(len(dirs))
+    d = dirs[idx]
+    token = read_token_for(d)
+    if not token:
+        log(f"No token in {d}; skipping")
         return None
-    active = selector.choose(sessions)
-    if len(dirs) > 1:
-        log(f"Active plan: {active} (s={sessions[active]})")
-    return payloads[active]
+    payload = await poll_api(token)
+    if payload is not None:
+        payload["who"] = _WHO_LABELS[idx]
+    return payload
 
 
 class Session:

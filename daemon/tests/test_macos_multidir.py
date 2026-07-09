@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Unit tests for the macOS/Linux daemon's multi config-dir active-plan support.
 
-Covers read_config_dirs, read_token_for, PlanSelector, and poll_active_payload.
+Covers read_config_dirs, read_token_for, ProfileRotator, and poll_active_payload.
 
 Run: python -m pytest daemon/tests/test_macos_multidir.py -x -q
 """
@@ -10,7 +10,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import daemon.claude_usage_daemon as mod
-from daemon.claude_usage_daemon import PlanSelector, read_config_dirs, read_token_for
+from daemon.claude_usage_daemon import ProfileRotator, read_config_dirs, read_token_for
 
 
 def _run(coro):
@@ -99,79 +99,84 @@ def test_keychain_service_for_non_default_dir_is_stable_and_distinct():
 
 
 # ---------------------------------------------------------------------------
-# PlanSelector — the "active = recent API activity" rule
+# ProfileRotator — round-robin index advance
 # ---------------------------------------------------------------------------
 
 A, B = Path("/a"), Path("/b")
 
 
-def test_selector_startup_picks_highest_util():
-    sel = PlanSelector()
-    assert sel.choose({A: 10, B: 30}) == B  # no history yet -> highest %
+def test_rotator_starts_at_index_zero():
+    r = ProfileRotator()
+    assert r.next_index(2) == 0
 
 
-def test_selector_switches_on_rise():
-    sel = PlanSelector()
-    sel.choose({A: 10, B: 30})           # startup -> B
-    assert sel.choose({A: 20, B: 30}) == A  # A rose 10->20 -> A active
+def test_rotator_advances_each_call():
+    r = ProfileRotator()
+    assert r.next_index(2) == 0
+    assert r.next_index(2) == 1
 
 
-def test_selector_sticky_when_no_movement():
-    sel = PlanSelector()
-    sel.choose({A: 10, B: 30})
-    sel.choose({A: 20, B: 30})           # A active
-    assert sel.choose({A: 20, B: 30}) == A  # nothing moved -> still A (not higher B)
-
-
-def test_selector_reset_to_zero_is_not_activity():
-    sel = PlanSelector()
-    sel.choose({A: 10, B: 30})
-    sel.choose({A: 20, B: 30})           # A active
-    sel.choose({A: 20, B: 45})           # B rose -> B active
-    assert sel.choose({A: 20, B: 0}) == B   # B window reset (drop) isn't a rise -> stays B
-
-
-def test_selector_larger_rise_wins_same_cycle():
-    sel = PlanSelector()
-    sel.choose({A: 10, B: 10})           # seed
-    assert sel.choose({A: 12, B: 40}) == B  # both rose same cycle -> higher % breaks tie
+def test_rotator_wraps_around():
+    r = ProfileRotator()
+    r.next_index(2)  # 0
+    r.next_index(2)  # 1
+    assert r.next_index(2) == 0
 
 
 # ---------------------------------------------------------------------------
-# poll_active_payload — integration over the helpers
+# poll_active_payload — round-robin over up to 2 configured dirs
 # ---------------------------------------------------------------------------
 
-def test_poll_active_payload_picks_active_and_skips_tokenless(monkeypatch):
-    dirs = [A, B]
-    monkeypatch.setattr(mod, "read_config_dirs", lambda: dirs)
-    monkeypatch.setattr(mod, "read_token_for", lambda d: {A: "tA", B: None}[d])  # B has no token
+def test_poll_active_payload_single_dir_never_labels_who(monkeypatch):
+    monkeypatch.setattr(mod, "read_config_dirs", lambda: [A])
+    monkeypatch.setattr(mod, "read_token_for", lambda d: "tA")
 
     async def fake_poll(token):
-        return {"s": 25, "ok": True} if token == "tA" else None
+        return {"s": 25, "ok": True}
 
-    sel = PlanSelector()
     with patch.object(mod, "poll_api", new=AsyncMock(side_effect=fake_poll)):
-        payload = _run(mod.poll_active_payload(sel))
-    assert payload == {"s": 25, "ok": True}  # only A had a token
+        payload = _run(mod.poll_active_payload(ProfileRotator()))
+    assert payload == {"s": 25, "ok": True}
+    assert "who" not in payload
 
 
-def test_poll_active_payload_returns_none_when_all_fail(monkeypatch):
-    monkeypatch.setattr(mod, "read_config_dirs", lambda: [A, B])
-    monkeypatch.setattr(mod, "read_token_for", lambda d: None)
-    with patch.object(mod, "poll_api", new=AsyncMock(return_value=None)):
-        assert _run(mod.poll_active_payload(PlanSelector())) is None
-
-
-def test_poll_active_payload_selects_higher_util_plan(monkeypatch):
+def test_poll_active_payload_two_dirs_labels_self_then_work(monkeypatch):
     monkeypatch.setattr(mod, "read_config_dirs", lambda: [A, B])
     monkeypatch.setattr(mod, "read_token_for", lambda d: {A: "tA", B: "tB"}[d])
 
     async def fake_poll(token):
-        return {"s": 12, "ok": True} if token == "tA" else {"s": 40, "ok": True}
+        return {"s": 10, "ok": True}
 
+    rotator = ProfileRotator()
     with patch.object(mod, "poll_api", new=AsyncMock(side_effect=fake_poll)):
-        payload = _run(mod.poll_active_payload(PlanSelector()))
-    assert payload["s"] == 40  # startup -> highest util plan (B)
+        first = _run(mod.poll_active_payload(rotator))
+        second = _run(mod.poll_active_payload(rotator))
+        third = _run(mod.poll_active_payload(rotator))
+    assert first["who"] == "Self"
+    assert second["who"] == "Work"
+    assert third["who"] == "Self"  # wraps back around
+
+
+def test_poll_active_payload_tokenless_dir_returns_none_but_still_advances(monkeypatch):
+    monkeypatch.setattr(mod, "read_config_dirs", lambda: [A, B])
+    monkeypatch.setattr(mod, "read_token_for", lambda d: {A: None, B: "tB"}[d])
+
+    async def fake_poll(token):
+        return {"s": 10, "ok": True}
+
+    rotator = ProfileRotator()
+    with patch.object(mod, "poll_api", new=AsyncMock(side_effect=fake_poll)):
+        first = _run(mod.poll_active_payload(rotator))   # A is due, has no token
+        second = _run(mod.poll_active_payload(rotator))  # B is due, has a token
+    assert first is None
+    assert second["who"] == "Work"
+
+
+def test_poll_active_payload_returns_none_when_poll_api_fails(monkeypatch):
+    monkeypatch.setattr(mod, "read_config_dirs", lambda: [A, B])
+    monkeypatch.setattr(mod, "read_token_for", lambda d: "tA")
+    with patch.object(mod, "poll_api", new=AsyncMock(return_value=None)):
+        assert _run(mod.poll_active_payload(ProfileRotator())) is None
 
 
 # ---------------------------------------------------------------------------

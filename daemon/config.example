@@ -6,14 +6,17 @@
 #
 # The daemon re-reads it on every poll, so edits take effect within ~60s — no restart needed.
 
-# Poll more than one Claude config dir and show whichever plan is currently
-# active. Use this if you run separate plans from different config dirs (e.g. a
-# personal plan in ~/.claude and a work plan in ~/.claude-work, selected via
-# CLAUDE_CONFIG_DIR). Comma-separated; ~ is expanded.
-#   - The daemon polls every listed dir each cycle and displays the plan whose
-#     usage rose most recently (i.e. the one you're actively using). Before any
-#     change is seen it shows the plan with the highest current usage.
-#   - Unset (default) = just ~/.claude, unchanged single-plan behavior.
+# Show two profiles, rotating which one's usage is on screen every ~60s (one
+# poll cycle each). Use this if you run two separate Claude plans from
+# different config dirs (e.g. a personal plan in ~/.claude and a work plan
+# in ~/.claude-work, selected via CLAUDE_CONFIG_DIR). Comma-separated; ~ is
+# expanded; only the first 2 entries are used.
+#   - Order is the ONLY thing that decides the on-screen label: the first
+#     entry is always shown as "Self", the second as "Work" — the daemon
+#     never looks at the directory names themselves. Put whichever profile
+#     you want labeled "Self" first.
+#   - Unset (default) = just ~/.claude, unchanged single-plan behavior: no
+#     rotation, no on-screen label.
 #   - install.sh can detect your ~/.claude* dirs and fill this in for you.
 # config_dirs = ~/.claude, ~/.claude-work
 
