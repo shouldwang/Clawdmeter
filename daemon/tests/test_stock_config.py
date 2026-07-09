@@ -44,3 +44,52 @@ def test_stock_symbols_caps_at_max_and_logs(tmp_path, monkeypatch, capsys):
     result = mod.read_stock_symbols()
     assert result == ["A", "B", "C", "D", "E"]
     assert "using first 5" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# add_stock_field
+# ---------------------------------------------------------------------------
+
+def test_add_stock_field_omits_key_when_no_symbols_configured(monkeypatch):
+    monkeypatch.setattr(mod, "read_stock_symbols", lambda: [])
+    payload = {}
+    _run(mod.add_stock_field(payload))
+    assert "stock" not in payload
+
+
+def test_add_stock_field_includes_all_successful_quotes(monkeypatch):
+    monkeypatch.setattr(mod, "read_stock_symbols", lambda: ["TSLA", "TPE:0050"])
+
+    async def fake_fetch(symbol):
+        return {
+            "TSLA": {"s": "TSLA", "p": 100.0, "c": 1.0},
+            "TPE:0050": {"s": "0050", "p": 50.0, "c": -2.0},
+        }[symbol]
+
+    monkeypatch.setattr(mod, "fetch_quote", AsyncMock(side_effect=fake_fetch))
+    payload = {}
+    _run(mod.add_stock_field(payload))
+    assert payload["stock"] == [
+        {"s": "TSLA", "p": 100.0, "c": 1.0},
+        {"s": "0050", "p": 50.0, "c": -2.0},
+    ]
+
+
+def test_add_stock_field_omits_failed_symbols_but_keeps_others(monkeypatch):
+    monkeypatch.setattr(mod, "read_stock_symbols", lambda: ["TSLA", "BAD"])
+
+    async def fake_fetch(symbol):
+        return None if symbol == "BAD" else {"s": "TSLA", "p": 100.0, "c": 1.0}
+
+    monkeypatch.setattr(mod, "fetch_quote", AsyncMock(side_effect=fake_fetch))
+    payload = {}
+    _run(mod.add_stock_field(payload))
+    assert payload["stock"] == [{"s": "TSLA", "p": 100.0, "c": 1.0}]
+
+
+def test_add_stock_field_omits_key_when_all_symbols_fail(monkeypatch):
+    monkeypatch.setattr(mod, "read_stock_symbols", lambda: ["BAD"])
+    monkeypatch.setattr(mod, "fetch_quote", AsyncMock(return_value=None))
+    payload = {}
+    _run(mod.add_stock_field(payload))
+    assert "stock" not in payload

@@ -6,6 +6,7 @@ so either transport can import this module without pulling in the other's
 dependency.
 """
 
+import asyncio
 import calendar
 import datetime
 import getpass
@@ -18,6 +19,14 @@ import time
 from pathlib import Path
 
 import httpx
+
+# Make the sibling `stock_quotes` module importable both when this file is run
+# directly as a script (launchd) and when imported as `daemon.usage_core`
+# (pytest, via the repo-root conftest.py) — in the latter case daemon/ itself
+# isn't otherwise on sys.path. Same pattern used by claude_usage_daemon.py /
+# claude_usage_daemon_usb.py when importing this module.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from stock_quotes import fetch_quote  # noqa: E402
 
 POLL_INTERVAL = 60
 MAX_STOCK_SYMBOLS = 5  # must match firmware/src/data.h's MAX_STOCKS
@@ -249,6 +258,23 @@ def read_clock_setting() -> str:
     return "off"
 
 
+async def add_stock_field(payload: dict) -> None:
+    """Add "stock": [...] to the payload for all configured symbols.
+
+    Omitted entirely when no symbols are configured. A symbol whose fetch
+    fails this cycle (see stock_quotes.fetch_quote) is simply left out of the
+    array — the firmware keeps showing its last-known value for that symbol
+    rather than the daemon sending a placeholder.
+    """
+    symbols = read_stock_symbols()
+    if not symbols:
+        return
+    results = await asyncio.gather(*(fetch_quote(s) for s in symbols))
+    quotes = [q for q in results if q is not None]
+    if quotes:
+        payload["stock"] = quotes
+
+
 def add_chime_field(payload: dict) -> None:
     """Add "c":1 to the payload when the config opts in, so the firmware may
     sound the session-reset chime. Omitted entirely when chime is off."""
@@ -352,6 +378,7 @@ async def poll_api(token: str) -> dict | None:
         }
     add_chime_field(payload)   # adds "c":1 iff the config opts in
     add_clock_fields(payload)   # adds "t" + "tf" iff the config opts in
+    await add_stock_field(payload)   # adds "stock":[...] iff any symbols are configured
     return payload
 
 
