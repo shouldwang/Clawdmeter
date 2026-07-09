@@ -30,6 +30,7 @@ from usage_core import (  # noqa: E402
     POLL_INTERVAL,
     PlanSelector,
     _extract_access_token,
+    _keychain_service_for,
     _read_token_keychain,
     log,
     poll_api,
@@ -94,12 +95,10 @@ def read_config_dirs() -> list[Path]:
 def read_token_for(config_dir: Path) -> str | None:
     """Read the OAuth token for one config dir.
 
-    Linux: each dir keeps its own ``<dir>/.credentials.json``. macOS: the default
-    install stores the token in Keychain with no file, so for the default dir we
-    fall back to Keychain when no file is present — preserving existing
-    single-plan macOS behavior. Additional macOS dirs are read from their files;
-    a work plan whose token lives only in the single Keychain entry can't be told
-    apart there (documented follow-up).
+    Linux: each dir keeps its own ``<dir>/.credentials.json``. macOS: Claude
+    Code stores the token in Keychain with no file, under a per-dir service
+    name (see `_keychain_service_for`) — so every configured dir falls back
+    to Keychain when no file is present, not just the default.
     """
     cred = config_dir / ".credentials.json"
     try:
@@ -107,8 +106,8 @@ def read_token_for(config_dir: Path) -> str | None:
             return _extract_access_token(cred.read_text())
     except OSError as e:
         log(f"Error reading credentials in {config_dir}: {e}")
-    if sys.platform == "darwin" and config_dir == DEFAULT_CONFIG_DIR:
-        return _read_token_keychain()
+    if sys.platform == "darwin":
+        return _read_token_keychain(_keychain_service_for(config_dir))
     return None
 
 

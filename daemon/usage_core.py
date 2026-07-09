@@ -9,6 +9,7 @@ dependency.
 import calendar
 import datetime
 import getpass
+import hashlib
 import json
 import re
 import subprocess
@@ -76,14 +77,31 @@ def _extract_access_token(blob: str) -> str | None:
     return None
 
 
-def _read_token_keychain() -> str | None:
+def _keychain_service_for(config_dir: Path) -> str:
+    """Keychain service name Claude Code uses for a given CLAUDE_CONFIG_DIR.
+
+    The default dir (~/.claude) uses the bare KEYCHAIN_SERVICE. For any other
+    config dir, Claude Code on macOS stores the token under
+    "<KEYCHAIN_SERVICE>-<hash>", where <hash> is the first 8 hex chars of the
+    SHA-256 of the config dir's absolute path string. Reverse-engineered by
+    inspecting `security dump-keychain` output against known config dirs —
+    not documented by Claude Code, so treat as best-effort and revisit if it
+    stops matching after a Claude Code update.
+    """
+    if config_dir == DEFAULT_CONFIG_DIR:
+        return KEYCHAIN_SERVICE
+    digest = hashlib.sha256(str(config_dir).encode()).hexdigest()[:8]
+    return f"{KEYCHAIN_SERVICE}-{digest}"
+
+
+def _read_token_keychain(service: str = KEYCHAIN_SERVICE) -> str | None:
     try:
         out = subprocess.run(
             [
                 "security",
                 "find-generic-password",
                 "-s",
-                KEYCHAIN_SERVICE,
+                service,
                 "-a",
                 getpass.getuser(),
                 "-w",
@@ -141,12 +159,10 @@ def read_config_dirs() -> list[Path]:
 def read_token_for(config_dir: Path) -> str | None:
     """Read the OAuth token for one config dir.
 
-    Linux: each dir keeps its own ``<dir>/.credentials.json``. macOS: the default
-    install stores the token in Keychain with no file, so for the default dir we
-    fall back to Keychain when no file is present — preserving existing
-    single-plan macOS behavior. Additional macOS dirs are read from their files;
-    a work plan whose token lives only in the single Keychain entry can't be told
-    apart there (documented follow-up).
+    Linux: each dir keeps its own ``<dir>/.credentials.json``. macOS: Claude
+    Code stores the token in Keychain with no file, under a per-dir service
+    name (see `_keychain_service_for`) — so every configured dir falls back
+    to Keychain when no file is present, not just the default.
     """
     cred = config_dir / ".credentials.json"
     try:
@@ -154,8 +170,8 @@ def read_token_for(config_dir: Path) -> str | None:
             return _extract_access_token(cred.read_text())
     except OSError as e:
         log(f"Error reading credentials in {config_dir}: {e}")
-    if sys.platform == "darwin" and config_dir == DEFAULT_CONFIG_DIR:
-        return _read_token_keychain()
+    if sys.platform == "darwin":
+        return _read_token_keychain(_keychain_service_for(config_dir))
     return None
 
 

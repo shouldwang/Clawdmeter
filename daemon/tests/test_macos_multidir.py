@@ -70,6 +70,34 @@ def test_token_for_file_wins_over_keychain(tmp_path, monkeypatch):
         assert read_token_for(tmp_path) == "TOK_FILE"
 
 
+def test_token_for_non_default_dir_falls_back_to_keychain_on_macos(tmp_path, monkeypatch):
+    # A profile dir (e.g. ~/.claude-work) with no credentials file: macOS
+    # still stores its token in Keychain, under a per-dir service name.
+    monkeypatch.setattr(mod.sys, "platform", "darwin")
+    with patch.object(mod, "_read_token_keychain", return_value="TOK_KEYCHAIN") as mock_kc:
+        assert read_token_for(tmp_path) == "TOK_KEYCHAIN"
+    mock_kc.assert_called_once_with(mod._keychain_service_for(tmp_path))
+
+
+def test_token_for_non_default_dir_returns_none_on_linux(tmp_path, monkeypatch):
+    # Linux keeps its own <dir>/.credentials.json per profile; no Keychain to
+    # fall back to.
+    monkeypatch.setattr(mod.sys, "platform", "linux")
+    assert read_token_for(tmp_path) is None
+
+
+def test_keychain_service_for_default_dir_is_bare_service():
+    assert mod._keychain_service_for(mod.DEFAULT_CONFIG_DIR) == "Claude Code-credentials"
+
+
+def test_keychain_service_for_non_default_dir_is_stable_and_distinct():
+    a = mod._keychain_service_for(Path.home() / ".claude-personal")
+    b = mod._keychain_service_for(Path.home() / ".claude-work")
+    assert a != b
+    assert a.startswith("Claude Code-credentials-")
+    assert mod._keychain_service_for(Path.home() / ".claude-personal") == a  # stable
+
+
 # ---------------------------------------------------------------------------
 # PlanSelector — the "active = recent API activity" rule
 # ---------------------------------------------------------------------------
