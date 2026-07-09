@@ -20,3 +20,6 @@ __pycache__/
 *.pyc
 .superpowers/
 .worktrees/
+
+# Local dev tooling (not project source)
+get-platformio.py
