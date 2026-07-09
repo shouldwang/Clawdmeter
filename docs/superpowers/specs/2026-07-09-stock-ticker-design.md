@@ -52,20 +52,29 @@ firmware->daemon only sends acks).
 - New `daemon/stock_quotes.py`, following the existing `httpx.AsyncClient`
   pattern in `usage_core.py:271-278` (async client, `timeout=20.0`, no
   retry/backoff — errors are swallowed to `None` and logged, never raised).
-- Config symbol format ports `toYahooSymbol()` from the user's `finance-os`
-  project (`lib/market-data/yahoo.ts:102-107`): a plain ticker means US and
-  is used as-is (`"TSLA"`); a `TPE:`-prefixed ticker means Taiwan (`"TPE:0050"`).
+- Config symbol format accepts three input shapes, confirmed against Yahoo
+  Finance's own quote pages (e.g. `finance.yahoo.com/quote/2330.TW`,
+  `finance.yahoo.com/quote/0050.TW` — Taiwan Stock Exchange tickers use a
+  `.TW` suffix on Yahoo's own backend, the same one `query1.finance.yahoo.com`
+  serves; `yfinance` itself documents no separate convention, it just passes
+  the ticker string through to this same Yahoo backend):
+  - Plain US ticker, no prefix/suffix: `"TSLA"`
+  - `TPE:`-prefixed (ported from the user's `finance-os` project,
+    `lib/market-data/yahoo.ts:102-107`): `"TPE:0050"`
+  - Already Yahoo-native `.TW`-suffixed: `"2330.TW"`
   Two derived forms per configured symbol:
-  - **Yahoo query symbol** (used only for the API call): strip the `TPE:`
-    prefix and append `.TW` — `"TPE:0050"` → `"0050.TW"`. Plain tickers are
-    unchanged.
+  - **Yahoo query symbol** (used only for the API call): if the config
+    string starts with `TPE:`, strip that prefix and append `.TW`
+    (`"TPE:0050"` → `"0050.TW"`); otherwise use the config string as-is
+    (`"TSLA"` unchanged, `"2330.TW"` unchanged — already valid).
   - **Display symbol** (sent to firmware as `"s"`, and all the firmware ever
-    shows): strip everything up to and including the last `:` — `"TPE:0050"`
-    → `"0050"`, `"TSLA"` → `"TSLA"` (no colon, unchanged). The firmware never
-    sees or displays the exchange prefix or the `.TW` suffix.
-  - Only the `TPE:` prefix is supported for now (matching `finance-os`'s only
-    supported non-US case) — other exchange prefixes are out of scope (see
-    Out of scope).
+    shows): strip a leading `TPE:` prefix if present, then strip a trailing
+    `.TW` suffix if present — `"TPE:0050"` → `"0050"`, `"2330.TW"` → `"2330"`,
+    `"TSLA"` → `"TSLA"` (neither present, unchanged). The firmware never
+    sees or displays any exchange prefix or country suffix.
+  - Only the `TPE:` prefix / `.TW` suffix pair is supported for now (Taiwan
+    is the only non-US market in scope) — other exchange
+    prefixes/suffixes are out of scope (see Out of scope).
 - For each configured symbol, `GET
   query1.finance.yahoo.com/v8/finance/chart/{yahoo_query_symbol}?interval=1d&range=1d`
   with header `User-Agent: Mozilla/5.0`. Extract from `chart.result[0].meta`:
@@ -76,8 +85,9 @@ firmware->daemon only sends acks).
   - symbol: the **display symbol** derived above (not returned by `meta`
     itself, and not the Yahoo query symbol used for the request)
 - Config: existing daemon config file gains a `stock_symbols` array (e.g.
-  `["TSLA", "TPE:0050"]`), user-edited directly, no in-app management UI. Hard
-  cap of 5 symbols (see buffer-size note below).
+  `["TSLA", "TPE:0050", "2330.TW"]`, mixing all three accepted shapes),
+  user-edited directly, no in-app management UI. Hard cap of 5 symbols (see
+  buffer-size note below).
 - Payload assembly: new `add_stock_field(payload)`, following the same
   conditional-key pattern as `add_chime_field()` / `add_clock_fields()`
   (`usage_core.py:222,252,323-324`) — only adds the `"stock"` key when
@@ -146,6 +156,9 @@ arrived):
 - Daemon: `stock_quotes.py` fetch function tested against mocked httpx
   responses for success / 429 / timeout, following the existing test style
   used for the usage API in `daemon/tests/`.
+- Daemon: symbol conversion tested for all three input shapes (`"TSLA"`,
+  `"TPE:0050"`, `"2330.TW"`) against both derived forms (Yahoo query symbol,
+  display symbol) to lock in the stripping rules above.
 - Daemon: `add_stock_field()` tested with 0 / 1 / 5 configured symbols,
   asserting the key is omitted/present correctly and that a full 5-symbol
   payload stays under the new 512-byte firmware buffer.
