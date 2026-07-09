@@ -19,3 +19,4 @@ daemon/.venv/
 __pycache__/
 *.pyc
 .superpowers/
+.worktrees/
