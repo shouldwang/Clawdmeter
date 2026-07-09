@@ -535,7 +535,9 @@ static void init_stock_screen(lv_obj_t* scr) {
 // "(N.NN)" part is derived on-device from those two values.
 static void render_stock_quote(const StockQuote& q) {
     lv_label_set_text(lbl_stock_symbol, q.symbol);
-    lv_label_set_text_fmt(lbl_stock_price, "%.2f", q.price);
+    char price_buf[16];
+    snprintf(price_buf, sizeof(price_buf), "%.2f", q.price);
+    lv_label_set_text(lbl_stock_price, price_buf);
 
     char buf[32];
     if (q.pct_change > 0.0f) {
@@ -618,11 +620,11 @@ void ui_init(void) {
         lv_obj_add_event_cb(splash_get_root(), global_click_cb, LV_EVENT_CLICKED, NULL);
     }
 
-    logo_img = lv_image_create(scr);
+    logo_img = lv_image_create(usage_container);
     lv_image_set_src(logo_img, &logo_dsc);
     lv_obj_set_pos(logo_img, L.margin, L.title_y - 10);
 
-    who_badge = lv_label_create(scr);
+    who_badge = lv_label_create(usage_container);
     lv_label_set_text(who_badge, "");
     lv_obj_set_style_text_font(who_badge, &font_styrene_28, 0);
     lv_obj_set_style_text_color(who_badge, COL_TEXT, 0);
@@ -820,13 +822,16 @@ void ui_tick_anim(void) {
 }
 
 static screen_t prev_non_splash_screen = SCREEN_USAGE;
+// who_badge is a child of usage_container, so it's already hidden whenever
+// that container is (splash/lightbox/stock); this only needs to additionally
+// hide it on the usage screen itself when there's no `who` value yet.
 static void apply_who_badge_visibility(void) {
     if (!who_badge) return;
     bool has_who = lv_label_get_text(who_badge)[0] != '\0';
-    if (current_screen == SCREEN_SPLASH || !has_who) {
-        lv_obj_add_flag(who_badge, LV_OBJ_FLAG_HIDDEN);
-    } else {
+    if (current_screen == SCREEN_USAGE && has_who) {
         lv_obj_clear_flag(who_badge, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(who_badge, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
@@ -852,10 +857,9 @@ void ui_show_screen(screen_t screen) {
     default: break;
     }
 
-    if (logo_img) {
-        if (screen == SCREEN_SPLASH) lv_obj_add_flag(logo_img, LV_OBJ_FLAG_HIDDEN);
-        else                          lv_obj_clear_flag(logo_img, LV_OBJ_FLAG_HIDDEN);
-    }
+    // logo_img is a child of usage_container, so its visibility already
+    // follows the container's hidden flag set above — no separate toggle
+    // needed here.
 
     if (screen != SCREEN_SPLASH) prev_non_splash_screen = screen;
     current_screen = screen;
