@@ -102,6 +102,7 @@ static void compute_layout(const BoardCaps& c) {
 
 // ---- Usage screen widgets (single non-splash view) ----
 static lv_obj_t* usage_container;
+static lv_obj_t* lightbox_container;
 static lv_obj_t* lbl_title;
 // Clock fed by the daemon: base epoch (local wall-clock seconds) + the lv_tick at
 // which it landed, so the title ticks forward locally between 60s payloads.
@@ -430,6 +431,28 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_align(lbl_anim, LV_ALIGN_BOTTOM_MID, 0, -15);
 }
 
+// Placeholder for the Phase 4 lightbox (memes from SPIFFS) — real content is
+// separate future work (docs/plans/usb-transport-lightbox.md). This exists
+// so the 4-screen cycle has a real stop here today instead of a gap.
+static void init_lightbox_screen(lv_obj_t* scr) {
+    lightbox_container = lv_obj_create(scr);
+    lv_obj_set_size(lightbox_container, L.scr_w, L.scr_h);
+    lv_obj_set_pos(lightbox_container, 0, 0);
+    lv_obj_set_style_bg_color(lightbox_container, COL_BG, 0);
+    lv_obj_set_style_bg_opa(lightbox_container, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(lightbox_container, 0, 0);
+    lv_obj_set_style_pad_all(lightbox_container, 0, 0);
+    lv_obj_clear_flag(lightbox_container, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(lightbox_container, global_click_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_flag(lightbox_container, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t* lbl = lv_label_create(lightbox_container);
+    lv_label_set_text(lbl, "Lightbox coming soon");
+    lv_obj_set_style_text_font(lbl, &font_styrene_28, 0);
+    lv_obj_set_style_text_color(lbl, COL_DIM, 0);
+    lv_obj_center(lbl);
+}
+
 // ======== Public API ========
 
 void ui_init(void) {
@@ -442,6 +465,7 @@ void ui_init(void) {
     init_icon_dsc_rgb565a8(&logo_dsc, LOGO_WIDTH, LOGO_HEIGHT, logo_data);
 
     init_usage_screen(scr);
+    init_lightbox_screen(scr);
     splash_init(scr);
 
     if (splash_get_root()) {
@@ -664,11 +688,13 @@ static void global_click_cb(lv_event_t* e) {
 
 void ui_show_screen(screen_t screen) {
     lv_obj_add_flag(usage_container, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(lightbox_container, LV_OBJ_FLAG_HIDDEN);
     splash_hide();
 
     switch (screen) {
-    case SCREEN_SPLASH:  splash_show(); break;
-    case SCREEN_USAGE:   lv_obj_clear_flag(usage_container, LV_OBJ_FLAG_HIDDEN); break;
+    case SCREEN_SPLASH:   splash_show(); break;
+    case SCREEN_USAGE:    lv_obj_clear_flag(usage_container, LV_OBJ_FLAG_HIDDEN); break;
+    case SCREEN_LIGHTBOX: lv_obj_clear_flag(lightbox_container, LV_OBJ_FLAG_HIDDEN); break;
     default: break;
     }
 
@@ -687,11 +713,9 @@ void ui_toggle_splash(void) {
     else                                  ui_show_screen(SCREEN_SPLASH);
 }
 
-// Only two screens exist today (splash, usage), so cycling is a toggle —
-// same as ui_toggle_splash. Phase 4 adds lightbox into the rotation, at
-// which point this stops being a plain toggle.
 void ui_cycle_screen(void) {
-    ui_toggle_splash();
+    screen_t next = (screen_t)((current_screen + 1) % SCREEN_COUNT);
+    ui_show_screen(next);
 }
 
 screen_t ui_get_current_screen(void) {
