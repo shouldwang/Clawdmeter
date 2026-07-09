@@ -121,13 +121,26 @@ static bool parse_json(const char* json, UsageData* out) {
     out->clock_epoch = doc["t"] | 0L;
     out->clock_fmt = doc["tf"] | 24;
     out->ok = doc["ok"] | false;
+
+    JsonArray stock_arr = doc["stock"].as<JsonArray>();
+    out->stock_count = 0;
+    for (JsonVariant v : stock_arr) {
+        if (out->stock_count >= MAX_STOCKS) break;
+        StockQuote& q = out->stock[out->stock_count];
+        strlcpy(q.symbol, v["s"] | "", sizeof(q.symbol));
+        q.price = v["p"] | 0.0f;
+        q.pct_change = v["c"] | 0.0f;
+        out->stock_count++;
+    }
+
     out->valid = true;
     return true;
 }
 
 // ---- Serial command buffer ----
-// JSON usage payloads run ~80-120 bytes in practice; 256 leaves headroom.
-#define CMD_BUF_SIZE 256
+// JSON usage payloads run ~80-120 bytes in practice; stock quotes (up to
+// MAX_STOCKS entries) can add another ~150-200 bytes. 512 leaves headroom.
+#define CMD_BUF_SIZE 512
 static char cmd_buf[CMD_BUF_SIZE];
 static int cmd_pos = 0;
 static bool cmd_overflow = false;  // set when a line exceeds CMD_BUF_SIZE; dropped at the next newline
