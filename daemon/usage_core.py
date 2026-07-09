@@ -20,6 +20,7 @@ from pathlib import Path
 import httpx
 
 POLL_INTERVAL = 60
+MAX_STOCK_SYMBOLS = 5  # must match firmware/src/data.h's MAX_STOCKS
 
 # macOS: token lives in Keychain (service "Claude Code-credentials").
 # Linux: token lives in ~/.claude/.credentials.json.
@@ -195,6 +196,35 @@ def read_chime_setting() -> str:
     except OSError:
         pass
     return "off"
+
+
+def read_stock_symbols() -> list[str]:
+    """Stock ticker symbols to poll, from the `stock_symbols` option (comma list).
+
+    Defaults to [] (no stock screen data) so existing setups are unaffected
+    until the user opts in. Capped at MAX_STOCK_SYMBOLS entries — extras are
+    dropped (and logged, not silently ignored) so a config mistake can't
+    balloon the payload past the firmware's serial buffer.
+    """
+    raw = ""
+    try:
+        if CONFIG_FILE.exists():
+            for line in CONFIG_FILE.read_text().splitlines():
+                line = line.split("#", 1)[0].strip()
+                if "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                if key.strip().lower() == "stock_symbols":
+                    raw = val.strip()
+    except OSError:
+        pass
+    if not raw:
+        return []
+    symbols = [s.strip() for s in raw.split(",") if s.strip()]
+    if len(symbols) > MAX_STOCK_SYMBOLS:
+        log(f"stock_symbols has {len(symbols)} entries, using first {MAX_STOCK_SYMBOLS}")
+        symbols = symbols[:MAX_STOCK_SYMBOLS]
+    return symbols
 
 
 def read_clock_setting() -> str:
