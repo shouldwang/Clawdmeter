@@ -111,6 +111,7 @@ static bool parse_json(const char* json, UsageData* out) {
     out->weekly_pct = doc["w"] | 0.0f;
     out->weekly_reset_mins = doc["wr"] | -1;
     strlcpy(out->status, doc["st"] | "unknown", sizeof(out->status));
+    strlcpy(out->who, doc["who"] | "", sizeof(out->who));
     out->chime = doc["c"] | false;   // absent (old daemon / chime off) → stay silent
     const char* acct = doc["acct"] | "pro";
     out->enterprise = (strcmp(acct, "ent") == 0);
@@ -277,7 +278,6 @@ void setup() {
 
     ui_init();
     ui_update_usb_status(usb_hid_link_up());
-    ui_update_battery(power_hal_battery_pct(), power_hal_is_charging());
     ui_show_screen(SCREEN_SPLASH);
 
     Serial.printf("Dashboard ready (%s, %dx%d), waiting for data on USB serial...\n",
@@ -351,16 +351,6 @@ void loop() {
     if (usb_connected != last_usb_connected) {
         last_usb_connected = usb_connected;
         ui_update_usb_status(usb_connected);
-    }
-
-    static int  last_pct      = -2;
-    static bool last_charging = false;
-    int  pct      = power_hal_battery_pct();
-    bool charging = power_hal_is_charging();
-    if (pct != last_pct || charging != last_charging) {
-        last_pct = pct;
-        last_charging = charging;
-        ui_update_battery(pct, charging);
     }
 
     check_serial_cmd();

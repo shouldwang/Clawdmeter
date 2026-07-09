@@ -127,10 +127,9 @@ static lv_obj_t* lbl_spending_desc = nullptr;     // "of your monthly budget"
 static lv_obj_t* lbl_spending_status = nullptr;   // "Under pace" / "On pace" / "Over pace"
 static lv_obj_t* lbl_anim;      // status line: connection state + whimsical idle
 
-// ---- Battery indicator (shared, on top) ----
-static lv_obj_t* battery_img;
+// ---- Profile badge (shared, on top — replaces the old battery indicator) ----
+static lv_obj_t* who_badge;
 static lv_obj_t* logo_img;
-static lv_image_dsc_t battery_dscs[5];  // empty, low, medium, full, charging
 
 // ---- Data availability → which usage sub-view to show ----
 // Keep the last valid usage visible across transient API/poll failures. The idle
@@ -276,14 +275,6 @@ static lv_obj_t* make_pill(lv_obj_t* parent, const char* text) {
     lv_obj_set_style_pad_top(lbl, 6, 0);
     lv_obj_set_style_pad_bottom(lbl, 6, 0);
     return lbl;
-}
-
-static void init_battery_icons(void) {
-    init_icon_dsc_rgb565a8(&battery_dscs[0], ICON_BATTERY_W, ICON_BATTERY_H, icon_battery_data);
-    init_icon_dsc_rgb565a8(&battery_dscs[1], ICON_BATTERY_LOW_W, ICON_BATTERY_LOW_H, icon_battery_low_data);
-    init_icon_dsc_rgb565a8(&battery_dscs[2], ICON_BATTERY_MEDIUM_W, ICON_BATTERY_MEDIUM_H, icon_battery_medium_data);
-    init_icon_dsc_rgb565a8(&battery_dscs[3], ICON_BATTERY_FULL_W, ICON_BATTERY_FULL_H, icon_battery_full_data);
-    init_icon_dsc_rgb565a8(&battery_dscs[4], ICON_BATTERY_CHARGING_W, ICON_BATTERY_CHARGING_H, icon_battery_charging_data);
 }
 
 // ======== Usage Screen ========
@@ -447,7 +438,6 @@ void ui_init(void) {
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
 
     init_icon_dsc_rgb565a8(&logo_dsc, LOGO_WIDTH, LOGO_HEIGHT, logo_data);
-    init_battery_icons();
 
     init_usage_screen(scr);
     splash_init(scr);
@@ -460,16 +450,30 @@ void ui_init(void) {
     lv_image_set_src(logo_img, &logo_dsc);
     lv_obj_set_pos(logo_img, L.margin, L.title_y - 10);
 
-    battery_img = lv_image_create(scr);
-    lv_image_set_src(battery_img, &battery_dscs[0]);
-    lv_obj_set_pos(battery_img, L.scr_w - 48 - L.margin, L.title_y);
+    who_badge = lv_label_create(scr);
+    lv_label_set_text(who_badge, "");
+    lv_obj_set_style_text_font(who_badge, &font_styrene_28, 0);
+    lv_obj_set_style_text_color(who_badge, COL_TEXT, 0);
+    lv_obj_set_style_bg_color(who_badge, COL_ACCENT, 0);
+    lv_obj_set_style_bg_opa(who_badge, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(who_badge, 8, 0);
+    lv_obj_set_style_pad_left(who_badge, 12, 0);
+    lv_obj_set_style_pad_right(who_badge, 12, 0);
+    lv_obj_set_style_pad_top(who_badge, 3, 0);
+    lv_obj_set_style_pad_bottom(who_badge, 3, 0);
+    lv_obj_add_flag(who_badge, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_align(who_badge, LV_ALIGN_TOP_RIGHT, -L.margin, L.title_y);
 
 }
+
+static void apply_who_badge_visibility(void);
 
 void ui_update(const UsageData* data) {
     if (!data->valid) return;
     last_data_ms = lv_tick_get();   // a valid usage update just landed → dot goes green
     data_received = true;
+    lv_label_set_text(who_badge, data->who);
+    apply_who_badge_visibility();
 
     if (data->clock_epoch > 0) {    // daemon supplied wall-clock time → drive the title clock
         clock_base_epoch = data->clock_epoch;
@@ -630,10 +634,14 @@ void ui_tick_anim(void) {
 }
 
 static screen_t prev_non_splash_screen = SCREEN_USAGE;
-static void apply_battery_visibility(void) {
-    if (!battery_img) return;
-    if (current_screen == SCREEN_SPLASH) lv_obj_add_flag(battery_img, LV_OBJ_FLAG_HIDDEN);
-    else                                  lv_obj_clear_flag(battery_img, LV_OBJ_FLAG_HIDDEN);
+static void apply_who_badge_visibility(void) {
+    if (!who_badge) return;
+    bool has_who = lv_label_get_text(who_badge)[0] != '\0';
+    if (current_screen == SCREEN_SPLASH || !has_who) {
+        lv_obj_add_flag(who_badge, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_clear_flag(who_badge, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 static void global_click_cb(lv_event_t* e) {
@@ -658,7 +666,7 @@ void ui_show_screen(screen_t screen) {
 
     if (screen != SCREEN_SPLASH) prev_non_splash_screen = screen;
     current_screen = screen;
-    apply_battery_visibility();
+    apply_who_badge_visibility();
 }
 
 void ui_toggle_splash(void) {
@@ -684,23 +692,4 @@ void ui_update_usb_status(bool connected) {
     if (s_usb_connected && !was_connected) connected_at_ms = lv_tick_get();
     // pair / idle / usage — picked from connection + data availability.
     update_view_state();
-}
-
-void ui_update_battery(int percent, bool charging) {
-    int idx;
-    if (charging) {
-        idx = 4;
-    } else if (percent < 0) {
-        idx = 0;
-    } else if (percent <= 10) {
-        idx = 0;
-    } else if (percent <= 35) {
-        idx = 1;
-    } else if (percent <= 75) {
-        idx = 2;
-    } else {
-        idx = 3;
-    }
-    lv_image_set_src(battery_img, &battery_dscs[idx]);
-    apply_battery_visibility();
 }

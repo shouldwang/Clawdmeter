@@ -7,6 +7,7 @@ struct UsageData {
     float weekly_pct;        // 7-day utilization (Pro/Max only; 0 for Enterprise)
     int weekly_reset_mins;   // minutes until weekly reset (Pro/Max only)
     char status[16];         // "allowed", "limited", etc.
+    char who[8];             // "Self"/"Work" (2-profile setups); empty when absent
     bool chime;              // play the session-reset chime; false unless daemon opts in
     bool enterprise;         // true = Enterprise spending-limit account
     int time_pct;            // 0-100: fraction of billing period elapsed (Enterprise)

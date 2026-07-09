@@ -17,4 +17,3 @@ void ui_toggle_splash(void);
 void ui_cycle_screen(void);
 screen_t ui_get_current_screen(void);
 void ui_update_usb_status(bool connected);
-void ui_update_battery(int percent, bool charging);
