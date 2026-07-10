@@ -21,6 +21,13 @@ static AnimatedGIF*   gif;       // large decoder state, allocated per open
 static uint8_t*       filebuf;   // whole GIF file, preloaded into PSRAM
 static uint8_t*       framebuf;  // W*H 8-bit canvas + W*H*2 cooked RGB565
 static uint8_t*       turbobuf;  // W*H index + upstream TURBO_BUFFER_SIZE
+static uint8_t*       prev_frame; // W*H*2 cooked RGB565 copy of the last frame we
+                                   // handed to LVGL, used to bound-box diff each
+                                   // new frame so we only invalidate what changed
+                                   // (see Phase 4 "sweep" writeup, docs/plans/
+                                   // usb-transport-lightbox.md).
+static int            canvas_w;
+static int            canvas_h;
 static int            frame_delay_ms = 10;
 static lv_image_dsc_t frame_dsc;
 
@@ -34,11 +41,17 @@ static void* psram_calloc(size_t bytes) {
     return heap_caps_calloc(1, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 }
 
-// Decode scratch only (not persistent, not handed to LVGL) -- keep it off
+// Decode scratch only (not persistent, not handed to LVGL) -- prefer it off
 // PSRAM so the turbo path doesn't pay PSRAM access latency (see Phase 4 GIF
-// player investigation, docs/plans/usb-transport-lightbox.md).
+// player investigation, docs/plans/usb-transport-lightbox.md). Falls back to
+// PSRAM if it doesn't fit: at 480x480 canvas this buffer is ~255KB, which
+// doesn't reliably fit in the ~320KB internal SRAM pool once the rest of the
+// system's allocations are accounted for (fit fine at the original 240x240
+// canvas size, ~82KB).
 static void* sram_calloc(size_t bytes) {
-    return heap_caps_calloc(1, bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    void* p = heap_caps_calloc(1, bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (!p) p = heap_caps_calloc(1, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    return p;
 }
 
 static void destroy_decoder(void) {
@@ -81,13 +94,92 @@ static bool play_frame(bool first_frame, const char* source_path) {
     if (first_frame) {
         Serial.printf("gif_player: %s first frame decode %ums (budget %dms)\n",
                       source_path, decode_ms, delay_ms);
-    } else if (decode_ms * 2 >= (uint32_t)delay_ms) {
-        Serial.printf("gif_player: decode %ums (budget %dms)\n", decode_ms, delay_ms);
     }
 
     if (gif_timer) lv_timer_set_period(gif_timer, frame_delay_ms);
     lv_image_cache_drop(&frame_dsc);
-    lv_obj_invalidate(gif_img);
+
+    uint8_t* new_rgb = framebuf + (size_t)canvas_w * canvas_h;
+    size_t   row_bytes = (size_t)canvas_w * 2;
+
+    if (first_frame || !prev_frame) {
+        // No valid previous frame to diff against yet, and the widget is
+        // transitioning from hidden to visible -- everything is "new".
+        lv_obj_invalidate(gif_img);
+    } else {
+        // Bound-box diff against the last frame so we only invalidate (and
+        // therefore only flush to the panel) the region that actually
+        // changed, instead of the whole 480x480 lightbox every frame.
+        int min_y = -1, max_y = -1, min_x = -1, max_x = -1;
+        for (int y = 0; y < canvas_h; y++) {
+            uint8_t* new_row = new_rgb + (size_t)y * row_bytes;
+            uint8_t* old_row = prev_frame + (size_t)y * row_bytes;
+            if (memcmp(new_row, old_row, row_bytes) == 0) continue;
+            if (min_y < 0) min_y = y;
+            max_y = y;
+            const uint16_t* new_px = (const uint16_t*)new_row;
+            const uint16_t* old_px = (const uint16_t*)old_row;
+            for (int x = 0; x < canvas_w; x++) {
+                if (new_px[x] != old_px[x]) {
+                    if (min_x < 0 || x < min_x) min_x = x;
+                    if (x > max_x) max_x = x;
+                }
+            }
+        }
+
+        if (min_y >= 0) {
+            lv_area_t widget_coords;
+            lv_obj_get_coords(gif_img, &widget_coords);
+            int32_t widget_w = widget_coords.x2 - widget_coords.x1 + 1;
+            int32_t widget_h = widget_coords.y2 - widget_coords.y1 + 1;
+
+            // LV_IMAGE_ALIGN_COVER scales by max(widget_w/canvas_w,
+            // widget_h/canvas_h) uniformly on both axes, then center-crops
+            // whichever dimension overflows. Our per-axis ratio mapping below
+            // is only equivalent to that when canvas and widget share the
+            // same aspect ratio (true for our square 240x240 memes on the
+            // square 480x480 lightbox, uniform scale + zero crop offset) --
+            // for a mismatched aspect ratio the crop offset would need to be
+            // accounted for too, which we don't attempt. Rather than risk an
+            // under-invalidated stale-pixel bug on some future non-square
+            // asset, fall back to a full invalidate whenever the aspect
+            // ratios don't match; this only costs the optimization, not
+            // correctness.
+            if ((int64_t)canvas_w * widget_h != (int64_t)canvas_h * widget_w) {
+                lv_obj_invalidate(gif_img);
+            } else {
+                // Rather than re-derive LVGL's exact COVER-alignment math
+                // (risks a subtle off-by-one that under-invalidates and
+                // leaves stale pixels on screen), map the bbox with the same
+                // scale factor LVGL used, round outward, and pad by a couple
+                // pixels: over-invalidating just costs a slightly bigger
+                // flush, under-invalidating is a real visual bug.
+                const int32_t margin = 2;
+                int32_t sx1 = widget_coords.x1 + (int32_t)((int64_t)min_x * widget_w / canvas_w) - margin;
+                int32_t sy1 = widget_coords.y1 + (int32_t)((int64_t)min_y * widget_h / canvas_h) - margin;
+                int32_t sx2 = widget_coords.x1 + (int32_t)(((int64_t)(max_x + 1) * widget_w + canvas_w - 1) / canvas_w) + margin;
+                int32_t sy2 = widget_coords.y1 + (int32_t)(((int64_t)(max_y + 1) * widget_h + canvas_h - 1) / canvas_h) + margin;
+
+                if (sx1 < widget_coords.x1) sx1 = widget_coords.x1;
+                if (sy1 < widget_coords.y1) sy1 = widget_coords.y1;
+                if (sx2 > widget_coords.x2) sx2 = widget_coords.x2;
+                if (sy2 > widget_coords.y2) sy2 = widget_coords.y2;
+
+                lv_area_t area = { sx1, sy1, sx2, sy2 };
+                lv_obj_invalidate_area(gif_img, &area);
+            }
+        }
+        // min_y < 0 means the frame is byte-identical to the last one --
+        // nothing to redraw, skip invalidation entirely.
+    }
+
+    memcpy(prev_frame, new_rgb, row_bytes * canvas_h);
+
+    uint32_t total_ms = millis() - decode_started;
+    if (!first_frame && total_ms * 2 >= (uint32_t)delay_ms) {
+        Serial.printf("gif_player: frame %ums total (decode %ums) budget %dms\n",
+                      total_ms, decode_ms, delay_ms);
+    }
 
     if (rc == 0) {
         gif->reset();
@@ -177,6 +269,17 @@ bool gif_player_open(const char* path) {
         return false;
     }
 
+    size_t prev_frame_size = canvas_px * 2;
+    prev_frame = (uint8_t*)psram_calloc(prev_frame_size);
+    if (!prev_frame) {
+        Serial.printf("gif_player: %dx%d prev-frame buffer alloc (%u bytes) failed\n",
+                      w, h, (unsigned)prev_frame_size);
+        gif_player_stop();
+        return false;
+    }
+    canvas_w = w;
+    canvas_h = h;
+
     gif->setDrawType(GIF_DRAW_COOKED);
     gif->setFrameBuf(framebuf);
     gif->setTurboBuf(turbobuf);
@@ -221,6 +324,10 @@ void gif_player_stop(void) {
     if (turbobuf) {
         heap_caps_free(turbobuf);
         turbobuf = NULL;
+    }
+    if (prev_frame) {
+        heap_caps_free(prev_frame);
+        prev_frame = NULL;
     }
     memset(&frame_dsc, 0, sizeof frame_dsc);
 }

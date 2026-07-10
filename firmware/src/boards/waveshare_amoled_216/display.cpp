@@ -25,7 +25,13 @@ void display_hal_init(void) {
 }
 
 void display_hal_begin(void) {
-    gfx->begin();
+    // Driver default is 40MHz (Arduino_ESP32QSPI's ESP32QSPI_FREQUENCY);
+    // Waveshare's own reference firmware for this exact CO5300 panel runs
+    // QSPI at 80MHz. Halves per-frame flush time, which matters for
+    // full-screen animated content (lightbox GIFs) where the visible
+    // top-to-bottom LVGL PARTIAL-flush sweep is proportional to total
+    // transfer time — see docs/plans/usb-transport-lightbox.md.
+    gfx->begin(80000000);
     gfx->fillScreen(0x0000);
     gfx->setBrightness(200);
 
