@@ -237,6 +237,14 @@ static void check_serial_cmd() {
                 ui_lightbox_next();
                 Serial.println("{\"lightbox_next\":true}");
             }
+            // QA helper: same as a PRIMARY button press (cycles splash ->
+            // usage -> lightbox -> stock -> splash), so the screen can be
+            // driven to lightbox for `lightbox_next`/`screenshot` testing
+            // without a physical button press.
+            else if (strcmp(cmd_buf, "screen_next") == 0) {
+                ui_cycle_screen();
+                Serial.println("{\"screen_next\":true}");
+            }
             else if (cmd_buf[0] == '{') {
                 if (handle_usage_json(cmd_buf)) Serial.println("{\"ack\":true}");
                 else                            Serial.println("{\"err\":true}");
