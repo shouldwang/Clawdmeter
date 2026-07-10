@@ -18,7 +18,7 @@
 static lv_obj_t*      gif_img;
 static lv_timer_t*    gif_timer;
 static AnimatedGIF*   gif;       // large decoder state, allocated per open
-static File           gif_file;  // single active GIF file for callbacks
+static uint8_t*       filebuf;   // whole GIF file, preloaded into PSRAM
 static uint8_t*       framebuf;  // W*H 8-bit canvas + W*H*2 cooked RGB565
 static uint8_t*       turbobuf;  // W*H index + upstream TURBO_BUFFER_SIZE
 static int            frame_delay_ms = 10;
@@ -34,47 +34,11 @@ static void* psram_calloc(size_t bytes) {
     return heap_caps_calloc(1, bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
 }
 
-static void* gif_open_cb(const char* filename, int32_t* file_size) {
-    if (gif_file) gif_file.close();
-
-    const char* path = spiffs_path_from_lvgl_path(filename);
-    gif_file = SPIFFS.open(path, FILE_READ);
-    if (!gif_file) {
-        if (file_size) *file_size = 0;
-        return NULL;
-    }
-
-    if (file_size) *file_size = (int32_t)gif_file.size();
-    return &gif_file;
-}
-
-static void gif_close_cb(void* handle) {
-    File* file = (File*)handle;
-    if (file && *file) file->close();
-}
-
-static int32_t gif_read_cb(GIFFILE* file, uint8_t* buffer, int32_t length) {
-    File* handle = (File*)file->fHandle;
-    if (!handle || !*handle || length <= 0) return 0;
-
-    int32_t bytes_to_read = length;
-    if ((file->iSize - file->iPos) < length) {
-        bytes_to_read = file->iSize - file->iPos - 1;
-    }
-    if (bytes_to_read <= 0) return 0;
-
-    int32_t bytes_read = (int32_t)handle->read(buffer, bytes_to_read);
-    file->iPos = (int32_t)handle->position();
-    return bytes_read;
-}
-
-static int32_t gif_seek_cb(GIFFILE* file, int32_t position) {
-    File* handle = (File*)file->fHandle;
-    if (!handle || !*handle) return 0;
-
-    handle->seek(position);
-    file->iPos = (int32_t)handle->position();
-    return file->iPos;
+// Decode scratch only (not persistent, not handed to LVGL) -- keep it off
+// PSRAM so the turbo path doesn't pay PSRAM access latency (see Phase 4 GIF
+// player investigation, docs/plans/usb-transport-lightbox.md).
+static void* sram_calloc(size_t bytes) {
+    return heap_caps_calloc(1, bytes, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
 }
 
 static void destroy_decoder(void) {
@@ -83,7 +47,6 @@ static void destroy_decoder(void) {
         delete gif;
         gif = NULL;
     }
-    if (gif_file) gif_file.close();
 }
 
 static bool play_frame(bool first_frame, const char* source_path) {
@@ -157,10 +120,33 @@ bool gif_player_open(const char* path) {
         return false;
     }
 
-    gif->begin(GIF_PALETTE_RGB565_LE);
-    if (!gif->open(path, gif_open_cb, gif_close_cb, gif_read_cb, gif_seek_cb, NULL)) {
-        Serial.printf("gif_player: open %s failed (err %d)\n", path, gif->getLastError());
+    File file = SPIFFS.open(spiffs_path_from_lvgl_path(path), FILE_READ);
+    if (!file) {
+        Serial.printf("gif_player: open %s failed\n", path);
         destroy_decoder();
+        return false;
+    }
+    size_t file_size = file.size();
+    filebuf = (uint8_t*)psram_calloc(file_size);
+    if (!filebuf) {
+        Serial.printf("gif_player: %s file buffer alloc (%u bytes) failed\n", path, (unsigned)file_size);
+        file.close();
+        destroy_decoder();
+        return false;
+    }
+    size_t bytes_read = file.read(filebuf, file_size);
+    file.close();
+    if (bytes_read != file_size) {
+        Serial.printf("gif_player: %s short read (%u of %u bytes)\n",
+                      path, (unsigned)bytes_read, (unsigned)file_size);
+        gif_player_stop();
+        return false;
+    }
+
+    gif->begin(GIF_PALETTE_RGB565_LE);
+    if (!gif->open(filebuf, (int)file_size, NULL)) {
+        Serial.printf("gif_player: open %s failed (err %d)\n", path, gif->getLastError());
+        gif_player_stop();
         return false;
     }
 
@@ -168,7 +154,7 @@ bool gif_player_open(const char* path) {
     int h = gif->getCanvasHeight();
     if (w <= 0 || h <= 0) {
         Serial.printf("gif_player: invalid canvas %dx%d for %s\n", w, h, path);
-        destroy_decoder();
+        gif_player_stop();
         return false;
     }
 
@@ -178,12 +164,12 @@ bool gif_player_open(const char* path) {
     if (!framebuf) {
         Serial.printf("gif_player: %dx%d framebuffer alloc (%u bytes) failed\n",
                       w, h, (unsigned)frame_size);
-        destroy_decoder();
+        gif_player_stop();
         return false;
     }
 
     size_t turbo_size = canvas_px + TURBO_BUFFER_SIZE;
-    turbobuf = (uint8_t*)psram_calloc(turbo_size);
+    turbobuf = (uint8_t*)sram_calloc(turbo_size);
     if (!turbobuf) {
         Serial.printf("gif_player: %dx%d turbo buffer alloc (%u bytes) failed\n",
                       w, h, (unsigned)turbo_size);
@@ -224,6 +210,10 @@ void gif_player_stop(void) {
     }
     lv_image_cache_drop(&frame_dsc);
     destroy_decoder();
+    if (filebuf) {
+        heap_caps_free(filebuf);
+        filebuf = NULL;
+    }
     if (framebuf) {
         heap_caps_free(framebuf);
         framebuf = NULL;
