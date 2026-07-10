@@ -2,15 +2,14 @@
 
 #include <lvgl.h>
 
-// Lightbox GIF playback via the AnimatedGIF engine that ships inside LVGL,
-// driven directly in GIF_DRAW_COOKED mode instead of through the lv_gif
-// widget. lv_gif re-implements frame compositing in its own blend layer and
-// mishandles transparency (transparent pixels punch alpha holes into the
-// canvas instead of keeping the previous frame's pixels), which black-screens
-// any inter-frame-optimized GIF — e.g. ffmpeg's default "transdiff" output.
-// COOKED mode lets the engine composite frames itself (transparency,
-// disposal, local palettes) and hands us a complete RGB565 canvas per frame.
-// Approach borrowed from github.com/Glebka/esp32-animated-badge; details in
+#ifndef CLAWDMETER_USE_GIF_PLAYER
+#define CLAWDMETER_USE_GIF_PLAYER 0
+#endif
+
+// Lightbox GIF playback via upstream bitbank2/AnimatedGIF, driven directly in
+// GIF_DRAW_COOKED mode instead of through LVGL's bundled lv_gif widget. The
+// decoder owns GIF compositing (transparency, disposal, local palettes) and
+// hands LVGL a complete RGB565 canvas per frame. Details in
 // docs/plans/usb-transport-lightbox.md Phase 4.
 //
 // Stubs to no-ops on boards built without the GIF decoder (mirrors memefs.h)

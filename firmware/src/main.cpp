@@ -304,7 +304,7 @@ void setup() {
 
     usb_hid_init();
     input_hal_init();
-    memefs_init();  // no-op / zero memes on boards without PNG+GIF decoders enabled
+    memefs_init();  // no-op / zero memes on boards without lightbox media enabled
 
     ui_init();
     ui_update_usb_status(usb_hid_link_up());

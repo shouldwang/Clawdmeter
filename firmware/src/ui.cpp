@@ -451,8 +451,8 @@ static void init_usage_screen(lv_obj_t* scr) {
 
 // Lightbox screen (docs/plans/usb-transport-lightbox.md Phase 4) — displays
 // memes read from the device's SPIFFS partition via memefs.cpp. On boards
-// without the PNG/GIF decoders enabled, memefs reports zero memes and this
-// screen just shows its empty state — no #ifdef BOARD_* needed here.
+// without lightbox media enabled, memefs reports zero memes and this screen
+// just shows its empty state — no #ifdef BOARD_* needed here.
 static void init_lightbox_screen(lv_obj_t* scr) {
     lightbox_container = lv_obj_create(scr);
     lv_obj_set_size(lightbox_container, L.scr_w, L.scr_h);
@@ -467,18 +467,18 @@ static void init_lightbox_screen(lv_obj_t* scr) {
 
     // Both widgets are pinned full-screen with COVER alignment: the source
     // keeps its aspect ratio, is scaled until it fills the screen, and
-    // whatever overflows is cropped (lv_gif inherits lv_image, so the same
-    // property drives both).
+    // whatever overflows is cropped. GIF playback also renders into a plain
+    // lv_image, so the same property drives both.
     lightbox_img = lv_image_create(lightbox_container);
     lv_obj_set_size(lightbox_img, L.scr_w, L.scr_h);
     lv_obj_set_pos(lightbox_img, 0, 0);
     lv_image_set_inner_align(lightbox_img, LV_IMAGE_ALIGN_COVER);
     lv_obj_add_flag(lightbox_img, LV_OBJ_FLAG_HIDDEN);
 
-#if LV_USE_GIF
+#if CLAWDMETER_USE_GIF_PLAYER
     // Plain lv_image driven by gif_player (COOKED-mode AnimatedGIF), NOT an
-    // lv_gif widget — lv_gif's own blend layer breaks transparency-optimized
-    // GIFs (see gif_player.h).
+    // lv_gif widget — LVGL's bundled GIF decoder is intentionally disabled
+    // for this board to avoid symbol clashes with upstream AnimatedGIF.
     lightbox_gif = lv_image_create(lightbox_container);
     lv_obj_set_size(lightbox_gif, L.scr_w, L.scr_h);
     lv_obj_set_pos(lightbox_gif, 0, 0);
@@ -505,7 +505,7 @@ static void redraw_lightbox_screen(void) {
     int n = memefs_count();
     if (n == 0) {
         lv_obj_add_flag(lightbox_img, LV_OBJ_FLAG_HIDDEN);
-#if LV_USE_GIF
+#if CLAWDMETER_USE_GIF_PLAYER
         gif_player_stop();
         lv_obj_add_flag(lightbox_gif, LV_OBJ_FLAG_HIDDEN);
 #endif
@@ -517,7 +517,7 @@ static void redraw_lightbox_screen(void) {
     if (lightbox_index >= n) lightbox_index = 0;
     const char* path = memefs_path(lightbox_index);
 
-#if LV_USE_GIF
+#if CLAWDMETER_USE_GIF_PLAYER
     if (memefs_is_gif(lightbox_index)) {
         lv_obj_add_flag(lightbox_img, LV_OBJ_FLAG_HIDDEN);
         if (gif_player_open(path)) {
@@ -530,7 +530,7 @@ static void redraw_lightbox_screen(void) {
     } else
 #endif
     {
-#if LV_USE_GIF
+#if CLAWDMETER_USE_GIF_PLAYER
         // The GIF widget is the later sibling (drawn on top): leaving it
         // visible covers the PNG entirely. Stopping the player also frees
         // its decode buffers and halts per-frame CPU work.

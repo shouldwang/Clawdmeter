@@ -1,10 +1,11 @@
 #include "memefs.h"
 
-// Only wired up on boards built with the PNG/GIF decoders enabled (currently
-// waveshare_amoled_216 — see memefs.h). On every other board this whole file
-// compiles down to the stub block at the bottom, so shared ui.cpp code never
-// needs a #ifdef BOARD_* to call these functions.
-#if LV_USE_LODEPNG && LV_USE_GIF
+// Only wired up on boards built with the PNG decoder enabled (currently
+// waveshare_amoled_216 — see memefs.h). GIF files are indexed here even
+// though playback is handled outside LVGL by gif_player.cpp. On every other
+// board this whole file compiles down to the stub block at the bottom, so
+// shared ui.cpp code never needs a #ifdef BOARD_* to call these functions.
+#if LV_USE_LODEPNG
 
 #include <Arduino.h>
 #include <SPIFFS.h>
@@ -171,7 +172,7 @@ void memefs_init(void) {
     memefs_rescan();
 }
 
-#else  // !(LV_USE_LODEPNG && LV_USE_GIF) — stub for boards without decoders enabled
+#else  // !LV_USE_LODEPNG — stub for boards without lightbox media enabled
 
 void memefs_init(void) {}
 void memefs_rescan(void) {}

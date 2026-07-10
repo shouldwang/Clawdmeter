@@ -3,14 +3,15 @@
 
 // Meme image source for the lightbox screen (docs/plans/usb-transport-lightbox.md
 // Phase 4). Backed by the device's built-in flash SPIFFS partition, not a TF
-// card — see that doc for why. Only wired up on boards built with
-// LV_USE_LODEPNG + LV_USE_GIF (currently waveshare_amoled_216); on any other
-// board this reports zero memes so the lightbox screen falls back to its
-// empty state instead of failing to compile.
+// card — see that doc for why. Only wired up on boards built with the PNG
+// decoder enabled (currently waveshare_amoled_216); on any other board this
+// reports zero memes so the lightbox screen falls back to its empty state
+// instead of failing to compile. GIF files are still scanned here; playback
+// availability is decided by gif_player.cpp.
 //
 // Registers an LVGL fs driver on the 'S' letter, so paths returned by
-// memefs_path() are ready to hand straight to lv_image_set_src /
-// lv_gif_set_src.
+// memefs_path() are ready to hand straight to lv_image_set_src or
+// gif_player_open.
 void memefs_init(void);       // mount SPIFFS, register the LVGL fs driver, scan /memes/
 void memefs_rescan(void);     // re-scan /memes/ for the current file list
 int  memefs_count(void);      // number of memes found (0 if none / mount failed)
