@@ -39,6 +39,9 @@ struct Layout {
     int16_t usage_bar_y;
     int16_t usage_reset_y;
 
+    // Stock-ticker screen
+    int16_t stock_chart_h;
+
     // Bluetooth screen
     int16_t bt_info_panel_h;
     int16_t bt_reset_zone_h;
@@ -67,6 +70,7 @@ static void compute_layout(const BoardCaps& c) {
         L.usage_panel_gap = 16;
         L.usage_bar_y = 56;
         L.usage_reset_y = 94;
+        L.stock_chart_h = 180;
         L.bt_info_panel_h = 160;
         L.bt_reset_zone_h = 110;
         L.bt_title_font    = &font_tiempos_56;
@@ -81,6 +85,7 @@ static void compute_layout(const BoardCaps& c) {
         L.usage_panel_gap = 12;
         L.usage_bar_y = 48;
         L.usage_reset_y = 78;
+        L.stock_chart_h = 130;
         L.bt_info_panel_h = 140;
         L.bt_reset_zone_h = 90;
         L.bt_title_font    = &font_tiempos_34;
@@ -117,6 +122,8 @@ static lv_obj_t* lbl_stock_symbol;
 static lv_obj_t* lbl_stock_price;
 static lv_obj_t* lbl_stock_change;
 static lv_obj_t* lbl_stock_empty;
+static lv_obj_t* stock_chart;
+static lv_chart_series_t* stock_chart_series;
 
 static StockQuote known_stocks[MAX_STOCKS];
 static int known_stock_count = 0;
@@ -560,46 +567,50 @@ static void init_stock_screen(lv_obj_t* scr) {
     lv_obj_add_event_cb(stock_container, global_click_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_add_flag(stock_container, LV_OBJ_FLAG_HIDDEN);
 
-    // Full-bleed card (screen minus L.margin on every side) — symbol pinned
-    // to the top, price+change grouped and pinned to the bottom, via flex
-    // column with space-between (mirrors the confirmed HTML mockup).
-    lv_obj_t* panel = lv_obj_create(stock_container);
-    lv_obj_set_pos(panel, L.margin, L.margin);
-    lv_obj_set_size(panel, L.scr_w - 2 * L.margin, L.scr_h - 2 * L.margin);
-    lv_obj_set_style_bg_color(panel, COL_PANEL, 0);
-    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
-    lv_obj_set_style_radius(panel, 8, 0);
-    lv_obj_set_style_border_width(panel, 0, 0);
-    lv_obj_set_style_pad_all(panel, 32, 0);
-    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(panel, LV_OBJ_FLAG_EVENT_BUBBLE);
-    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-
-    lbl_stock_symbol = lv_label_create(panel);
+    // No background card — symbol / price / change / chart stack directly
+    // on the screen's black background, left-aligned and inset by L.margin
+    // on every side (mirrors the confirmed HTML mockup). The chart is
+    // pinned to the bottom margin; symbol/price/change grow down from the
+    // top, independent of it.
+    lbl_stock_symbol = lv_label_create(stock_container);
     lv_label_set_text(lbl_stock_symbol, "---");
     lv_obj_set_style_text_font(lbl_stock_symbol, &font_tiempos_60, 0);
     lv_obj_set_style_text_color(lbl_stock_symbol, COL_TEXT, 0);
+    lv_obj_set_pos(lbl_stock_symbol, L.margin, L.margin);
 
-    lv_obj_t* bottom_group = lv_obj_create(panel);
-    lv_obj_set_size(bottom_group, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(bottom_group, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(bottom_group, 0, 0);
-    lv_obj_set_style_pad_all(bottom_group, 0, 0);
-    lv_obj_clear_flag(bottom_group, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_flag(bottom_group, LV_OBJ_FLAG_EVENT_BUBBLE);
-
-    lbl_stock_price = lv_label_create(bottom_group);
+    lbl_stock_price = lv_label_create(stock_container);
     lv_label_set_text(lbl_stock_price, "---");
     lv_obj_set_style_text_font(lbl_stock_price, &font_styrene_96, 0);
     lv_obj_set_style_text_color(lbl_stock_price, COL_TEXT, 0);
-    lv_obj_set_pos(lbl_stock_price, 0, 0);
+    lv_obj_align_to(lbl_stock_price, lbl_stock_symbol, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 8);
 
-    lbl_stock_change = lv_label_create(bottom_group);
+    lbl_stock_change = lv_label_create(stock_container);
     lv_label_set_text(lbl_stock_change, "---");
     lv_obj_set_style_text_font(lbl_stock_change, &font_styrene_36, 0);
     lv_obj_set_style_text_color(lbl_stock_change, COL_TEXT, 0);
     lv_obj_align_to(lbl_stock_change, lbl_stock_price, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 16);
+
+    // Sparkline — the daemon pre-normalizes each point to 0-100 (see
+    // stock_quotes.py's _normalize_chart), so the axis range is fixed and
+    // the device never needs to know the real price. No series data means
+    // no "ch" this cycle (fetch failed/omitted) — series is just left
+    // empty, drawing nothing, rather than showing stale/garbage data.
+    stock_chart = lv_chart_create(stock_container);
+    lv_obj_set_pos(stock_chart, L.margin, L.scr_h - L.margin - L.stock_chart_h);
+    lv_obj_set_size(stock_chart, L.content_w, L.stock_chart_h);
+    lv_obj_set_style_bg_opa(stock_chart, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(stock_chart, 0, 0);
+    lv_obj_set_style_pad_all(stock_chart, 0, 0);
+    lv_obj_set_style_size(stock_chart, 0, 0, LV_PART_INDICATOR);  // no point markers
+    lv_obj_set_style_line_width(stock_chart, 5, LV_PART_ITEMS);   // default is ~4px
+    lv_chart_set_div_line_count(stock_chart, 0, 0);
+    lv_chart_set_type(stock_chart, LV_CHART_TYPE_LINE);
+    lv_chart_set_point_count(stock_chart, CHART_POINTS);
+    lv_chart_set_axis_range(stock_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 100);
+    lv_obj_clear_flag(stock_chart, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(stock_chart, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(stock_chart, LV_OBJ_FLAG_EVENT_BUBBLE);
+    stock_chart_series = lv_chart_add_series(stock_chart, COL_GREEN, LV_CHART_AXIS_PRIMARY_Y);
 
     lbl_stock_empty = lv_label_create(stock_container);
     lv_label_set_text(lbl_stock_empty, "No stocks configured");
@@ -624,24 +635,38 @@ static void render_stock_quote(const StockQuote& q) {
     lv_label_set_text(lbl_stock_price, price_buf);
 
     char buf[32];
+    lv_color_t state_color;
     if (q.pct_change > 0.0f) {
         float prev_close = q.price / (1.0f + q.pct_change / 100.0f);
         float abs_change = q.price - prev_close;
         snprintf(buf, sizeof(buf), "\xE2\x96\xB2 %.2f (%.2f%%)", abs_change, q.pct_change);
-        lv_obj_set_style_text_color(lbl_stock_price, COL_GREEN, 0);
-        lv_obj_set_style_text_color(lbl_stock_change, COL_GREEN, 0);
+        state_color = COL_GREEN;
     } else if (q.pct_change < 0.0f) {
         float prev_close = q.price / (1.0f + q.pct_change / 100.0f);
         float abs_change = prev_close - q.price;
         snprintf(buf, sizeof(buf), "\xE2\x96\xBC %.2f (%.2f%%)", abs_change, -q.pct_change);
-        lv_obj_set_style_text_color(lbl_stock_price, COL_RED, 0);
-        lv_obj_set_style_text_color(lbl_stock_change, COL_RED, 0);
+        state_color = COL_RED;
     } else {
         snprintf(buf, sizeof(buf), "%.2f%%", q.pct_change);
-        lv_obj_set_style_text_color(lbl_stock_price, COL_TEXT, 0);
-        lv_obj_set_style_text_color(lbl_stock_change, COL_TEXT, 0);
+        state_color = COL_TEXT;
     }
+    lv_obj_set_style_text_color(lbl_stock_price, state_color, 0);
+    lv_obj_set_style_text_color(lbl_stock_change, state_color, 0);
     lv_label_set_text(lbl_stock_change, buf);
+
+    // Chart is best-effort (daemon omits "ch" on a bad/empty intraday
+    // fetch) — no points this cycle means no line, not a stale/flat one.
+    if (q.chart_points == 0) {
+        lv_obj_add_flag(stock_chart, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_clear_flag(stock_chart, LV_OBJ_FLAG_HIDDEN);
+    lv_chart_set_series_color(stock_chart, stock_chart_series, state_color);
+    int32_t values[CHART_POINTS];
+    for (int i = 0; i < CHART_POINTS; i++) {
+        values[i] = (i < q.chart_points) ? q.chart[i] : LV_CHART_POINT_NONE;
+    }
+    lv_chart_set_series_values(stock_chart, stock_chart_series, values, CHART_POINTS);
 }
 
 static void redraw_stock_screen(void) {
@@ -650,6 +675,7 @@ static void redraw_stock_screen(void) {
         lv_obj_add_flag(lbl_stock_symbol, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(lbl_stock_price, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(lbl_stock_change, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(stock_chart, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(lbl_stock_empty, LV_OBJ_FLAG_HIDDEN);
         return;
     }
@@ -657,6 +683,8 @@ static void redraw_stock_screen(void) {
     lv_obj_clear_flag(lbl_stock_price, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(lbl_stock_change, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(lbl_stock_empty, LV_OBJ_FLAG_HIDDEN);
+    // render_stock_quote() below decides the chart's own hidden flag
+    // per-quote (q.chart_points == 0 → hidden), so it's not touched here.
     if (stock_display_index >= known_stock_count) stock_display_index = 0;
     render_stock_quote(known_stocks[stock_display_index]);
 }

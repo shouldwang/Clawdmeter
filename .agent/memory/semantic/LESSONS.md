@@ -31,6 +31,16 @@
 - 發生了什麼:計畫文件記載 SPIFFS 分區 3.375MB(`default_16MB.csv`),據此評估 coalesce 素材(1.1MB)裝不裝得下。實際解析 `.pio/build/waveshare_amoled_216/partitions.bin`(每 32 bytes 一個 entry,magic `AA 50`,offset/size 在 bytes 4-12)發現是 `default_8MB.csv` 的佈局:SPIFFS 只有 1.5MB @ 0x670000。錯誤來源:`waveshare_amoled_216` env **沒有**覆寫 `board_build.partitions`(沿用 board 預設 8MB 表),但 platformio.ini 裡其他三個 env(`waveshare_amoled_18`、兩個 `_c6`)都顯式設了 `flash_size = 16MB` + `default_16MB.csv`——查的人看到鄰近 env 的設定就以為全 repo 一致。
 - 正確做法:(1) 任何 env 的 flash/partition 數字,以「該 env 自己的 env 區塊」+「build 產物 `.pio/build/<env>/partitions.bin` 解析」為準,不要看鄰近 env、也不要信文件筆記裡未標注查證方式的數字——解析用工具鏈內建的 `~/.platformio/packages/framework-arduinoespressif32/tools/gen_esp32part.py <partitions.bin>` 直接轉人讀表格,不用手刻位元組解析(手刻的話:每 32 bytes 一個 entry,magic `AA 50`,offset/size 在 bytes 4-12);(2) 本 repo 的既知不一致:216 env 是 8MB 表(SPIFFS 1.5MB,coalesce 素材後 headroom 僅 ~400KB),其他三 env 是 16MB 表;216 板實體 flash 是否為 16MB 尚未查證(唯讀指令 `esptool.py flash_id` 可查),要升 `default_16MB.csv` 前先查,且升表 = 全量重燒 + SPIFFS/NVS 清空。
 
+## 改了 daemon 端程式碼後裝置驗證仍顯示舊值:先查 launchd 常駐 process 有沒有重啟,不要先懷疑韌體
+
+- 發生了什麼:改完 `daemon/stock_quotes.py` 的百分比計算 bug 後,手動組 JSON 用 pyserial 推正確資料上裝置、也收到 `{"ack":true}`,但螢幕過一陣子又變回錯的數字。因此走了一輪完全用不上的彎路:重燒韌體、以為 flash verify 失敗把晶片留在 bootloader、逐步 esptool 診斷開機狀態——花了大量步驟才想到查 `ps aux`,發現 `com.user.claude-usage-daemon`(launchd 管理,~/Library/Logs/claude-usage-daemon.out.log 有完整送出紀錄)從對話開始前就常駐在跑,每 60 秒真的會用它「記憶體裡的舊版程式碼」重新抓資料蓋掉螢幕——Python 的 daemon process 不會因為你改了 disk 上的 `.py` 檔就自動重新 import,韌體本身完全沒問題。
+- 正確做法:任何一次「改了 daemon/背景常駐服務的程式碼,要在裝置或介面上驗證效果」的任務,第一步先 `ps aux | grep <daemon 進程名>` 確認是否有長壽 process 在跑;若有且是 `launchctl list` 能查到 label 的(本 repo 是 `com.user.claude-usage-daemon`),用 `launchctl kickstart -k gui/$(id -u)/<label>` 重啟讓它重新 import 修正後的程式碼,再看 log(`~/Library/Logs/claude-usage-daemon.out.log`)裡它下一輪實際送出的內容,比對前後兩輪的差異來確認 fix 生效——這比任何手動一次性推資料的驗證都可靠,因為手動推的資料在下一個 poll cycle 就會被常駐 process 蓋掉。看到「裝置行為跟我剛推的資料對不上」時,先排除「有沒有另一個活著的寫入者」,再往韌體/硬體方向查。
+
+## Yahoo Finance 未公開 chart API 的 chartPreviousClose 語意隨 range 參數改變,不是固定的「昨收」
+
+- 發生了什麼:daemon 為了拿當日走勢加了 sparkline 功能,把 `query1.finance.yahoo.com/v8/finance/chart/{symbol}` 的請求參數從 `interval=1d&range=1d` 改成 `interval=5m&range=5d` 以取得盤中序列。改動後 `meta.regularMarketChangePercent` 常態缺席、退回用 `meta.chartPreviousClose` 算漲跌幅的路徑,算出來的百分比從此系統性錯誤(TSLA 顯示 -4.41%,Yahoo Finance 官網實際顯示 +3.20%)。Root cause:`chartPreviousClose` 的語意是「這次請求的 range 視窗開始前那個收盤價」,不是固定意義的「前一交易日收盤」——range 從 1d 換成 5d 後,同一個欄位從「昨收」(393.93)悄悄變成「約六個交易日前的收盤」(425.30),兩者都是「合法」的欄位值,沒有任何 schema 或型別上的錯誤可以觸發警覺,純粹是語意隨參數位移。
+- 正確做法:這隻 API 沒有官方文件,任何欄位的語意都可能跟請求參數(尤其 `range`/`interval`)綁定,換參數後不能只信「欄位名字聽起來像什麼」——要嘛換一個型別上就不隨 range 變動的欄位(本例改用 `meta.previousClose`,range-independent,已用使用者提供的 Yahoo Finance 頁面真實數字驗證吻合),要嘛針對新舊參數各打一次真實請求、比對同一欄位的值有沒有跳動。這個 bug 的訊號是「數字看起來合理但跟已知的外部真值對不上」,不是程式崩潰或型別錯誤——寫涉及外部數據源正確性的程式時,測試不能只驗證「內部邏輯自洽」(例如漲跌方向跟 chart 走勢一致),要有至少一個跟外部真實來源(使用者截圖、官網頁面)比對過的即時驗證案例。
+
 ## 韌體解碼問題先在 host 重演:把 vendored 函式庫連同 stub 標頭搬到 Mac 編譯
 
 - 發生了什麼:GIF 在裝置上黑屏/顏色錯亂,serial 無 log、每輪重燒要幾分鐘,遠端猜測燒掉大量時間。決定性的工具是把 `.pio/libdeps/<env>/lvgl/src/libs/gif/{gif.c,AnimatedGIF.h}` 原封複製到暫存目錄,寫四個 stub 標頭(`lv_conf_internal.h`=定義 `LV_USE_GIF`、`misc/lv_fs.h`=stdio 包裝、`misc/lv_log.h`=printf、`stdlib/lv_string.h`=memcpy 巨集)後用 clang 編譯,逐幀輸出 PPM 目視+統計。一小時內排除了解碼器、blend 邏輯、串流 IO、短讀、EOF-seek 五類假設,把嫌疑收斂到裝置端環境。

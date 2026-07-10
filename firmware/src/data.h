@@ -1,13 +1,17 @@
 #pragma once
 #include <Arduino.h>
 
-#define MAX_STOCKS 5   // must match daemon/usage_core.py's MAX_STOCK_SYMBOLS
+#define MAX_STOCKS 5     // must match daemon/usage_core.py's MAX_STOCK_SYMBOLS
+#define CHART_POINTS 24  // must match daemon/stock_quotes.py's CHART_POINTS
 
 struct StockQuote {
     char symbol[10];   // display symbol, e.g. "TSLA", "0050" — daemon has
                         // already stripped any exchange prefix/suffix
     float price;
     float pct_change;  // today's % change, signed
+    uint8_t chart[CHART_POINTS];  // today's session, pre-normalized 0-100 by
+                                   // the daemon; only chart_points are valid
+    uint8_t chart_points;         // 0 = no "ch" key this cycle (chart hidden)
 };
 
 struct UsageData {
