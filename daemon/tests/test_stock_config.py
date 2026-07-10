@@ -97,8 +97,14 @@ def test_add_stock_field_omits_key_when_all_symbols_fail(monkeypatch):
 
 
 def test_add_stock_field_full_payload_fits_firmware_buffer(monkeypatch):
+    # Worst case: 5 symbols, each with a full CHART_POINTS-length chart of
+    # 3-digit values — must fit firmware/src/main.cpp's CMD_BUF_SIZE (1536),
+    # with room left for the ~80-120 byte usage payload sharing the buffer.
+    import daemon.stock_quotes as stock_quotes_mod
+    chart = [100] * stock_quotes_mod.CHART_POINTS
     monkeypatch.setattr(mod, "read_stock_symbols", lambda: ["AAAAA"] * 5)
-    monkeypatch.setattr(mod, "fetch_quote", AsyncMock(return_value={"s": "AAAAA", "p": 12345.67, "c": -123.45}))
+    monkeypatch.setattr(mod, "fetch_quote", AsyncMock(
+        return_value={"s": "AAAAA", "p": 12345.67, "c": -123.45, "ch": chart}))
     payload = {}
     _run(mod.add_stock_field(payload))
-    assert len(json.dumps(payload, separators=(",", ":"))) < 512
+    assert len(json.dumps(payload, separators=(",", ":"))) < 1536 - 200

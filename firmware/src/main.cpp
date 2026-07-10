@@ -131,6 +131,12 @@ static bool parse_json(const char* json, UsageData* out) {
         strlcpy(q.symbol, v["s"] | "", sizeof(q.symbol));
         q.price = v["p"] | 0.0f;
         q.pct_change = v["c"] | 0.0f;
+        q.chart_points = 0;
+        JsonArray chart_arr = v["ch"].as<JsonArray>();
+        for (JsonVariant cv : chart_arr) {
+            if (q.chart_points >= CHART_POINTS) break;
+            q.chart[q.chart_points++] = cv.as<uint8_t>();
+        }
         out->stock_count++;
     }
 
@@ -140,8 +146,10 @@ static bool parse_json(const char* json, UsageData* out) {
 
 // ---- Serial command buffer ----
 // JSON usage payloads run ~80-120 bytes in practice; stock quotes (up to
-// MAX_STOCKS entries) can add another ~150-200 bytes. 512 leaves headroom.
-#define CMD_BUF_SIZE 512
+// MAX_STOCKS entries), each carrying a CHART_POINTS-length sparkline, can
+// add up to ~720 bytes worst case (measured: 5 symbols x full 3-digit
+// chart). 1536 leaves solid headroom.
+#define CMD_BUF_SIZE 1536
 static char cmd_buf[CMD_BUF_SIZE];
 static int cmd_pos = 0;
 static bool cmd_overflow = false;  // set when a line exceeds CMD_BUF_SIZE; dropped at the next newline
