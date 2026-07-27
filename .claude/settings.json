@@ -13,6 +13,13 @@
       "Bash(git checkout:*)",
       "Bash(git pull:*)",
       "Bash(git merge:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(/**/*.pem)",
+      "Bash(rm -rf *)"
     ]
   },
   "hooks": {
