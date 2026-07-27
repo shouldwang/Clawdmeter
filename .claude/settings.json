@@ -1,0 +1,65 @@
+{
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit",
+      "Bash(ls:*)",
+      "Bash(echo:*)",
+      "Bash(cat:*)",
+      "Bash(pwd:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git checkout:*)",
+      "Bash(git pull:*)",
+      "Bash(git merge:*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x .agent/scripts/hooks/post-edit.sh ] && bash .agent/scripts/hooks/post-edit.sh || jq -cn --arg msg \"[git-dev] 缺少 .agent/scripts/hooks/post-edit.sh，請執行 bootstrap-agent-project . --type git-dev\" '{systemMessage:$msg}'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x .agent/scripts/hooks/session-stop.sh ] && bash .agent/scripts/hooks/session-stop.sh || jq -cn --arg msg \"[git-dev] 缺少 .agent/scripts/hooks/session-stop.sh，請執行 bootstrap-agent-project . --type git-dev\" '{systemMessage:$msg}'",
+            "timeout": 30,
+            "statusMessage": "Preparing repo-local receipt..."
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "[ -x .agent/scripts/hooks/session-start.sh ] && bash .agent/scripts/hooks/session-start.sh || jq -cn --arg msg \"[git-dev] 缺少 .agent/scripts/hooks/session-start.sh，請執行 bootstrap-agent-project . --type git-dev\" '{systemMessage:$msg}'",
+            "timeout": 30,
+            "statusMessage": "Checking repo-local agent stack..."
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash '/Users/shouldwang/Documents/GitHub/dotfiles/harness-core/scripts/shared/emit-seed-drift.sh'",
+            "timeout": 15,
+            "statusMessage": "Checking seed drift..."
+          }
+        ]
+      }
+    ]
+  }
+}
