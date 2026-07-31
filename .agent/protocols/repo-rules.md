@@ -10,6 +10,7 @@
 - 預設先研究再下手，除非是明顯單點修補。
 - git push 一律走 gh：`gh auth setup-git && git push`，不改 remote URL 為 SSH。
 - 分支命名：`feat/<描述>` / `fix/<描述>` / `chore/<描述>`；功能開發、bug fix、實驗性修改都在獨立分支，不直接在 main commit。若 repo 例外（如 dotfiles），在 `project.toml` 設 `branch_required = false`。
+- 需要同時處理多個分支時使用 git worktree：資料夾名稱對應分支名稱（`/` 轉 `-`），放在主專案外部的兄弟目錄（例如 `../<repo>-worktrees/<name>`），不要放進主 repo 內部。
 
 ## 變更範圍
 
