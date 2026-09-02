@@ -1,4 +1,27 @@
 {
+  "permissions": {
+    "allow": [
+      "Read",
+      "Edit",
+      "Bash(ls:*)",
+      "Bash(echo:*)",
+      "Bash(cat:*)",
+      "Bash(pwd:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git checkout:*)",
+      "Bash(git pull:*)",
+      "Bash(git merge:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(/**/*.pem)",
+      "Bash(rm -rf *)"
+    ]
+  },
   "hooks": {
     "PostToolUse": [
       {
