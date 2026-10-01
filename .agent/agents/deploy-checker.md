@@ -10,6 +10,7 @@ tools: Bash
 2. ./.agent/protocols/repo-rules.md
 3. ./.agent/protocols/rpi.md
 4. ./.agent/memory/semantic/LESSONS.md
+5. ./.agent/AGENTS.md 的「Project-Specific Extensions」中，登記為 deploy／部署前檢查的 local protocol（若有）
 
 讀取 `project.toml` 後，取出以下值：
 - `commands.test`：測試指令
@@ -48,6 +49,10 @@ tools: Bash
 5. **Dependency check**
 
    確認 `dependency_files` 與 `lockfiles` 未脫鉤（比對 `git diff` 或修改時間）。
+
+6. **Local checks**
+
+   若「先讀」第 5 項有登記 local protocol，逐一執行其中定義的檢查，每項各自加一列到輸出表格；標為 blocker 的未過項目視為 Not Ready。沒有登記就略過。
 
 ## 輸出格式
 
