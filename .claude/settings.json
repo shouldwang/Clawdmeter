@@ -12,7 +12,14 @@
       "Bash(git log:*)",
       "Bash(git checkout:*)",
       "Bash(git pull:*)",
-      "Bash(git merge:*)"
+      "Bash(git merge:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(python3:*)",
+      "Bash(render-agent-adapters:*)",
+      "Bash(sync-agent-projects sync:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ],
     "deny": [
       "Read(./.env)",
@@ -20,6 +27,9 @@
       "Read(./secrets/**)",
       "Read(/**/*.pem)",
       "Bash(rm -rf *)"
+    ],
+    "ask": [
+      "Bash(git push:*)"
     ]
   },
   "hooks": {

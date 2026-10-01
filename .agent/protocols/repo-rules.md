@@ -2,7 +2,7 @@
 
 - `./.agent/project.toml` 是這個 repo 的 machine-readable source of truth。
 - `./.agent/scripts/hooks/` 只做 inform、verify 建議、receipt；不自動 commit、push、deploy。
-- repo-local `.agent/` 是 overlay：bootstrap 之後由 repo 自行維護，不與 dotfiles 自動同步。
+- repo-local `.agent/` 是 runtime wrapper + repo-specific context layer：shared seed 可由 `sync-agent-projects` 更新，repo-specific context / memory / state 仍由各 repo 自行維護。
 - repo-local 新增的 context / rules，預設放到固定 extension folders：`.agent/context/local/`、`.agent/protocols/local/`。durable memory 只放已蒸餾規則：`.agent/memory/semantic/LESSONS.md`。
 - 長輸出與暫存資訊寫到 `./.agent/logs/` 或 `./.agent/state/`，不要把大段 log 貼回主對話。
 - semantic memory 只接受 review 過的內容，透過 `extract-approach` skill 寫入。
