@@ -1,35 +1,13 @@
 # Repo Agent Entry
 
-Customize this file to match the read order and rules for this repo.
-This file is deployed on bootstrap and is not overwritten by sync.
+先讀 `.agent/protocols/read-order.md`（核心讀取順序與通用規則，由 dotfiles sync 管理，會隨核心更新）。
+本檔只放此 repo 專有的內容，deployed on bootstrap and is not overwritten by sync.
 
-## Config
-- `.agent/project.toml` — phase, commands, paths (machine-readable source of truth)
-
-## Shared Core
-- `/Users/shouldwang/Documents/GitHub/dotfiles/agent/AGENTS.md` — shared persona, language, execution contract, and base protocols
-
-## Memory (read in this order)
-- `.agent/memory/personal/PREFERENCES.md` — stable user conventions
-- `.agent/memory/semantic/LESSONS.md` — distilled patterns
+## Memory
 - `.agent/memory/local/*.md` — optional repo-local durable memory; inspect filenames or index first when present
 
-## Protocols
-- `.agent/protocols/skill-routing.md` — repo-local skill routing
-- `.agent/protocols/repo-rules.md` — repo constraints and editing rules
-- `.agent/protocols/rpi.md` — Research / Plan / Implement phase gates
-- `.agent/protocols/local/*.md` — optional repo-local rules; read relevant files when present
-
-## Context Extensions
-- `.agent/context/local/*.md` — optional repo-local context extensions; read relevant files when present
-
-## Agents
-- `.agent/agents/` — available subagent role specs (load on demand by trigger)
-
-## Rules
-1. Read `project.toml` first — `phase` determines RPI mode and valid verify commands.
-2. Check `LESSONS.md` before decisions you have been corrected on before.
-3. Session receipts and runtime state go under `.agent/state/`, not repo root.
-4. Distill lessons into `LESSONS.md` via the `extract-approach` skill, not ad-hoc edits.
-5. If `completed_stages` in RPI state is incomplete, do not skip to Implement.
-6. Long output and temp logs go to `.agent/logs/` or `.agent/state/`, not main conversation.
+## Project-Specific Extensions
+專案特有的 workflow、偏好或規則，不要改會被 sync 覆蓋的檔案，另開新檔，並在這裡登記讀取順序：
+1. 新檔放 `.agent/context/local/<name>.md`（背景、流程、整合限制）或 `.agent/protocols/local/<name>.md`（規則、偏好）。
+2. 在本節加一行 `- <path> — <何時讀>`，沒登記的檔案不保證會被讀到。
+- `.agent/context/local/project-context.md` — 韌體架構、板子目錄結構、新增板子流程；動 firmware 前讀
