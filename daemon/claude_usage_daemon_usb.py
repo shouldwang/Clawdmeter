@@ -29,6 +29,19 @@ ESPRESSIF_VID = 0x303A
 BAUD_RATE = 115200
 RETRY_WAIT = 5  # seconds between port-search retries when the device is absent
 READ_TIMEOUT = 1.0  # seconds; bounds how long a blocking readline() can block
+# Consecutive sessions that opened the port but never delivered a single
+# payload before we give up and exit non-zero. launchd's KeepAlive then starts
+# a fresh process — the only cure for a long-lived process whose runtime went
+# bad (e.g. brew replaced its Python), which otherwise retries forever while the
+# device shows "USB not connected".
+MAX_FAILED_SESSIONS = 6
+
+_data_sent = 0  # payloads written to the device, process lifetime
+
+
+def _note_data_sent() -> None:
+    global _data_sent
+    _data_sent += 1
 
 
 def find_port() -> str | None:
@@ -56,6 +69,7 @@ async def run_session(ser: serial.Serial, stop_event: asyncio.Event) -> None:
                 log(f"Sending: {data.decode().strip()}")
                 ser.write(data)
                 ser.flush()
+                _note_data_sent()
             last_poll = now
 
         # Drain any reply/boot-log lines. The device also prints plain-text
@@ -95,6 +109,7 @@ async def main() -> None:
     log("=== Claude Usage Tracker Daemon (USB serial) ===")
     log(f"Poll interval: {POLL_INTERVAL}s")
 
+    failed_sessions = 0
     while not stop_event.is_set():
         port = find_port()
         if not port:
@@ -118,15 +133,22 @@ async def main() -> None:
             continue
 
         log("Connected")
+        sent_before = _data_sent
         try:
             await run_session(ser, stop_event)
         except (serial.SerialException, OSError) as e:
-            log(f"Device disconnected: {e}")
+            log(f"Device disconnected: {type(e).__name__}: {e}")
         finally:
             try:
                 ser.close()
             except (serial.SerialException, OSError):
                 pass
+
+        failed_sessions = 0 if _data_sent > sent_before else failed_sessions + 1
+        if failed_sessions >= MAX_FAILED_SESSIONS and not stop_event.is_set():
+            log(f"{failed_sessions} sessions in a row delivered no data; "
+                "exiting so launchd restarts a fresh process")
+            sys.exit(1)
 
         if not stop_event.is_set():
             log(f"Port lost; retrying in {RETRY_WAIT}s...")
